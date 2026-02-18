@@ -44,6 +44,8 @@ class GridEngineConfig(BaseModel):
     grid_levels: int = Field(default=10, ge=2)
     min_grid_spacing_pct: float = Field(default=0.003, gt=0)
     max_grid_spacing_pct: float = Field(default=0.05, gt=0)
+    # 最小下单量 (BTC)，需满足交易所最小名义价值要求
+    min_order_qty: float = Field(default=0.0004, gt=0)
 
 
 class GridEngine:

@@ -169,7 +169,7 @@ class ExchangeClient:
         # 计算起始时间戳（或者使用传入的 since_ms）
         if since_ms is None:
             since_ms = int(
-                (pd.Timestamp.utcnow() - pd.Timedelta(days=since_days)).timestamp() * 1000
+                (pd.Timestamp.now("UTC") - pd.Timedelta(days=since_days)).timestamp() * 1000
             )
 
         logger.info(

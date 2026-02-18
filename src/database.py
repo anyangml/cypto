@@ -1,126 +1,143 @@
+"""
+database.py - 本地 SQLite 持久化层
+
+负责将交易所成交记录持久化到本地数据库，支持去重插入和统计查询。
+"""
+
 import sqlite3
-import pandas as pd
 from pathlib import Path
-from typing import List, Dict, Optional
+from typing import List, Dict
+
 from src.logger import setup_logger
 
 logger = setup_logger("database")
 
+
 class DatabaseHandler:
+    """
+    SQLite 数据库处理器。
+
+    每次操作均创建独立连接，天然支持多线程访问（FastAPI + 策略进程）。
+    """
+
     def __init__(self, db_path: str = "data/trades.db"):
         self.db_path = Path(db_path)
-        # Ensure directory exists
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_db()
 
-    def _get_conn(self):
-        return sqlite3.connect(self.db_path, check_same_thread=False)
+    def _get_conn(self) -> sqlite3.Connection:
+        """创建并返回一个新的数据库连接（调用方负责关闭）。"""
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row  # 支持按列名访问
+        return conn
 
     def _init_db(self):
-        """初始化数据库表结构"""
-        conn = self._get_conn()
-        cursor = conn.cursor()
-        
-        # 创建 trades 表
-        # id 是交易所返回的唯一成交ID，用于去重
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS trades (
-                id TEXT PRIMARY KEY,
-                symbol TEXT,
-                side TEXT,
-                price REAL,
-                qty REAL,
-                quote_qty REAL,
-                fee REAL,
-                fee_currency TEXT,
-                timestamp INTEGER,
-                datetime TEXT,
-                order_id TEXT
+        """初始化数据库表结构（幂等操作）。"""
+        with self._get_conn() as conn:
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS trades (
+                    id           TEXT PRIMARY KEY,
+                    symbol       TEXT NOT NULL,
+                    side         TEXT NOT NULL,
+                    price        REAL NOT NULL,
+                    qty          REAL NOT NULL,
+                    quote_qty    REAL NOT NULL,
+                    fee          REAL NOT NULL DEFAULT 0.0,
+                    fee_currency TEXT NOT NULL DEFAULT '',
+                    timestamp    INTEGER NOT NULL,
+                    datetime     TEXT NOT NULL,
+                    order_id     TEXT NOT NULL DEFAULT ''
+                )
+            """)
+            # 常用查询索引
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_trades_timestamp ON trades(timestamp DESC)"
             )
-        ''')
-        
-        conn.commit()
-        conn.close()
-        logger.info(f"Database initialized at {self.db_path}")
+        logger.info("Database initialized at %s", self.db_path)
 
-    def record_trades(self, trades: List[Dict]):
+    def record_trades(self, trades: List[Dict]) -> int:
         """
-        批量插入交易记录 (自动忽略已存在的 ID)
+        批量插入成交记录，自动忽略已存在的 ID（幂等）。
+
         Args:
-            trades: CCXT 格式的 trade 字典列表
+            trades: CCXT 格式的 trade 字典列表。
+
+        Returns:
+            实际新增的记录数。
         """
         if not trades:
-            return
+            return 0
 
-        conn = self._get_conn()
+        rows = []
+        for trade in trades:
+            fee = trade.get("fee") or {}
+            rows.append((
+                str(trade["id"]),
+                str(trade["symbol"]),
+                str(trade["side"]).upper(),
+                float(trade["price"]),
+                float(trade["amount"]),
+                float(trade.get("cost") or float(trade["price"]) * float(trade["amount"])),
+                float(fee.get("cost") or 0.0),
+                str(fee.get("currency") or ""),
+                int(trade["timestamp"]),
+                str(trade["datetime"]),
+                str(trade.get("order") or ""),
+            ))
+
+        inserted = 0
         try:
-            count = 0
-            for trade in trades:
-                # 解析费用
-                fee_cost = 0.0
-                fee_curr = ""
-                if trade.get('fee'):
-                    fee_cost = float(trade['fee'].get('cost', 0.0))
-                    fee_curr = trade['fee'].get('currency', '')
+            with self._get_conn() as conn:
+                for row in rows:
+                    cursor = conn.execute(
+                        """
+                        INSERT OR IGNORE INTO trades
+                        (id, symbol, side, price, qty, quote_qty,
+                         fee, fee_currency, timestamp, datetime, order_id)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        """,
+                        row,
+                    )
+                    inserted += cursor.rowcount
+        except sqlite3.Error as e:
+            logger.error("Failed to record trades: %s", e)
+            return 0
 
-                conn.execute('''
-                    INSERT OR IGNORE INTO trades 
-                    (id, symbol, side, price, qty, quote_qty, fee, fee_currency, timestamp, datetime, order_id)
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ''', (
-                    str(trade['id']),
-                    str(trade['symbol']),
-                    str(trade['side']).upper(),
-                    float(trade['price']),
-                    float(trade['amount']),
-                    float(trade['cost']) if trade.get('cost') else float(trade['price']) * float(trade['amount']),
-                    fee_cost,
-                    fee_curr,
-                    int(trade['timestamp']),
-                    str(trade['datetime']),
-                    str(trade['order'])
-                ))
-                count += conn.changes()
-            
-            conn.commit()
-            if count > 0:
-                logger.info(f"Recorded {count} new trades to database")
-                
-        except Exception as e:
-            logger.error(f"Failed to record trades: {e}")
-        finally:
-            conn.close()
+        if inserted > 0:
+            logger.info("Recorded %d new trade(s) to database", inserted)
+        return inserted
 
     def get_trades(self, limit: int = 100) -> List[Dict]:
-        """获取最近的交易记录"""
-        conn = self._get_conn()
+        """
+        获取最近的成交记录。
+
+        Args:
+            limit: 返回条数上限，最大 500。
+        """
+        # 防止 limit 被滥用（即使类型是 int，也做上限保护）
+        limit = max(1, min(int(limit), 500))
         try:
-            df = pd.read_sql_query(
-                f"SELECT * FROM trades ORDER BY timestamp DESC LIMIT {limit}", 
-                conn
-            )
-            return df.to_dict('records')
-        except Exception as e:
-            logger.error(f"Failed to fetch trades: {e}")
+            with self._get_conn() as conn:
+                cursor = conn.execute(
+                    "SELECT * FROM trades ORDER BY timestamp DESC LIMIT ?",
+                    (limit,),
+                )
+                return [dict(row) for row in cursor.fetchall()]
+        except sqlite3.Error as e:
+            logger.error("Failed to fetch trades: %s", e)
             return []
-        finally:
-            conn.close()
 
     def get_stats(self) -> Dict:
-        """获取简单的统计数据"""
-        conn = self._get_conn()
+        """获取汇总统计数据。"""
         try:
-            cursor = conn.cursor()
-            cursor.execute("SELECT COUNT(*), SUM(quote_qty) FROM trades")
-            row = cursor.fetchone()
-            total_trades = row[0] if row else 0
-            total_volume = row[1] if row and row[1] else 0.0
-            return {
-                "total_trades": total_trades,
-                "total_volume": round(total_volume, 2)
-            }
-        except Exception as e:
-            logger.error(f"Failed to get stats: {e}")
+            with self._get_conn() as conn:
+                row = conn.execute(
+                    "SELECT COUNT(*), COALESCE(SUM(quote_qty), 0.0) FROM trades"
+                ).fetchone()
+                return {
+                    "total_trades": row[0],
+                    "total_volume": round(row[1], 2),
+                }
+        except sqlite3.Error as e:
+            logger.error("Failed to get stats: %s", e)
             return {"total_trades": 0, "total_volume": 0.0}
-        finally:
-            conn.close()
