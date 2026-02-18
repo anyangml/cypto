@@ -35,6 +35,8 @@ class ExchangeClient:
     def __init__(self, config: Config) -> None:
         self._config = config
         self._exchange = self._build_exchange()
+        # 初始化一个仅用于获取行情的合约交易所实例（无需 API Key）
+        self._futures_exchange = self._build_futures_exchange()
         logger.info(
             "ExchangeClient 初始化完成 | 模式: %s | 交易对: %s",
             config.trading_mode.upper(),
@@ -61,6 +63,16 @@ class ExchangeClient:
             params["urls"] = {"api": _TESTNET_URLS}
             logger.warning("当前运行在 TESTNET 模式，不会产生真实交易。")
 
+        return ccxt.binance(params)
+
+    def _build_futures_exchange(self) -> ccxt.binance:
+        """构建用于获取合约数据的只读实例。"""
+        params = {
+            "enableRateLimit": True,
+            "options": {"defaultType": "future"},
+        }
+        if self._config.is_testnet:
+             params["urls"] = {"api": _TESTNET_URLS}
         return ccxt.binance(params)
 
     def _safe_call(self, func, *args, retries: int = 3, delay: float = 2.0, **kwargs):
@@ -220,3 +232,116 @@ class ExchangeClient:
         """
         df.to_csv(filepath)
         logger.info("K 线数据已保存至: %s", filepath)
+
+    def create_limit_order(self, side: str, price: float, quantity: float) -> dict:
+        """
+        发送限价单。
+
+        Args:
+            side:     "buy" 或 "sell"。
+            price:    委托价格。
+            quantity: 委托数量。
+
+        Returns:
+            CCXT 订单对象 (dict)，包含 id, status 等信息。
+        """
+        # 价格/数量精度修正（简单处理，建议在 execution 层做更严格的 stepSize 检查）
+        price = float(price)
+        quantity = float(quantity)
+
+        logger.info("正在提交限价单: %s %s @ %s", side.upper(), quantity, price)
+        try:
+            order = self._safe_call(
+                self._exchange.create_order,
+                symbol=self._config.symbol,
+                type="limit",
+                side=side,
+                amount=quantity,
+                price=price,
+            )
+            logger.info("下单成功: ID=%s, Status=%s", order.get("id"), order.get("status"))
+            return order
+        except Exception as e:
+            logger.error("下单失败: %s", e)
+            raise
+
+    def cancel_order(self, order_id: str) -> dict:
+        """
+        撤销指定订单。
+        """
+        logger.info("正在撤销订单: %s", order_id)
+        try:
+            return self._safe_call(
+                self._exchange.cancel_order,
+                id=order_id,
+                symbol=self._config.symbol,
+            )
+        except Exception as e:
+            logger.error("撤单失败:ID=%s, Error=%s", order_id, e)
+            raise
+
+    def fetch_open_orders(self) -> list:
+        """
+        获取当前交易对的所有挂单。
+        """
+        orders = self._safe_call(
+            self._exchange.fetch_open_orders,
+            symbol=self._config.symbol,
+        )
+        logger.debug("查询到 %d 个挂单", len(orders))
+        return orders
+
+    def cancel_all_orders(self) -> list:
+        """
+        撤销当前交易对的所有挂单。
+        """
+        logger.info("正在撤销所有挂单...")
+        try:
+            # 尝试使用 CCXT 的 cancel_all_orders (如果交易所支持)
+            # Binance 支持此接口
+            return self._safe_call(
+                self._exchange.cancel_all_orders,
+                symbol=self._config.symbol,
+            )
+        except Exception as e:
+            # 如果不支持或失败，回退到逐个撤单
+            logger.warning("批量撤单接口调用失败，尝试逐个撤单: %s", e)
+            open_orders = self.fetch_open_orders()
+            results = []
+            for order in open_orders:
+                try:
+                    res = self.cancel_order(order["id"])
+                    results.append(res)
+                except Exception:
+                    pass
+            return results
+
+    def fetch_open_interest(self) -> float:
+        """
+        获取当前合约的持仓量 (Open Interest)。
+        注意：即使是现货策略，也参考合约的 OI 作为风控指标。
+        """
+        try:
+            # OI 数据通常以合约为准
+            # 现货 Symbol (BTC/USDT) 在合约中通常也是 BTC/USDT
+            res = self._futures_exchange.fetch_open_interest(self._config.symbol)
+            # res 结构: {'symbol': 'BTC/USDT', 'openInterestAmount': 123.4, 'openInterestValue': ...}
+            # 我们关注数量还是价值？通常关注 Value (USDT)
+            # 但 CCXT openInterestAmount 是币的数量。
+            # 为了风控，关注 Amount 的变化率即可。
+            return float(res.get("openInterestAmount", 0.0))
+        except Exception as e:
+            logger.error("获取 Open Interest 失败: %s", e)
+            return 0.0
+
+    def fetch_funding_rate(self) -> float:
+        """
+        获取当前合约的资金费率。
+        """
+        try:
+            res = self._futures_exchange.fetch_funding_rate(self._config.symbol)
+            # res: {'fundingRate': 0.0001, ...}
+            return float(res.get("fundingRate", 0.0))
+        except Exception as e:
+            logger.error("获取资金费率失败: %s", e)
+            return 0.0

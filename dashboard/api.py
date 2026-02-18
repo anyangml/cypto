@@ -13,9 +13,10 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 import pandas as pd
+from functools import lru_cache
 
 # 确保项目根目录在 Python 路径中
 ROOT = Path(__file__).parent.parent
@@ -32,6 +33,9 @@ from src.exchange import ExchangeClient
 from src.regime_filter import RegimeFilter, RegimeFilterConfig, MarketRegime
 from src.strategy_config import load_strategy_config
 from src.logger import setup_logger
+from src.backtest import BacktestEngine
+from src.grid_engine import GridEngine
+from src.database import DatabaseHandler
 
 logger = setup_logger("dashboard")
 
@@ -185,6 +189,19 @@ class IndicatorSnapshot(BaseModel):
     fuse_triggered: bool
 
 
+class BacktestOutput(BaseModel):
+    equity_curve: List[Dict]
+    trades: List[Dict]
+    metrics: Dict
+
+class GridPlan(BaseModel):
+    mid_price: float
+    upper_boundary: float
+    lower_boundary: float
+    buy_orders: List[Dict]
+    sell_orders: List[Dict]
+    capital_utilization: float
+
 class RegimeResponse(BaseModel):
     candles: List[CandleData]
     segments: List[RegimeSegment]
@@ -192,12 +209,15 @@ class RegimeResponse(BaseModel):
     mode: str
     symbol: str
     timeframe: str
+    backtest: Optional[BacktestOutput] = None
+    grid_plan: Optional[GridPlan] = None
 
 
 # ======================================================================
 # 辅助函数
 # ======================================================================
 
+@lru_cache(maxsize=2)
 def _get_exchange(mode: str) -> ExchangeClient:
     """根据模式创建对应的交易所客户端。"""
     try:
@@ -308,7 +328,15 @@ def compute_regime(req: RegimeRequest):
         )
 
     # 3. 计算 Regime（滚动窗口）
-    rf = RegimeFilter(config=rf_config)
+    # 尝试加载完整策略配置以获取 tiers
+    tiers = []
+    try:
+        strategy_cfg = load_strategy_config()
+        tiers = strategy_cfg.position_sizing.tiers
+    except Exception as e:
+        logger.warning("策略配置加载失败，将使用默认分级逻辑: %s", e)
+
+    rf = RegimeFilter(config=rf_config, tiers=tiers)
     min_required = max(
         rf_config.adx_period * 2,
         rf_config.atr_long_period * 2,
@@ -368,6 +396,34 @@ def compute_regime(req: RegimeRequest):
         fuse_triggered=latest_result.fuse_triggered,
     )
 
+    # 7. 计算最新时刻的网格计划 (用于前端可视化)
+    grid_plan = None
+    try:
+        # 即使不开单也计算一下，方便用户看到预期
+        ge = GridEngine(load_strategy_config().grid_engine)
+        # 估算总权益 (Live模式应该从 exchange 获取，这里 mock 一下)
+        mock_equity = 10000.0
+        gp = ge.calculate_grid(df, mock_equity, latest_result.position_ratio)
+        grid_plan = GridPlan(**gp)
+    except Exception as e:
+        logger.warning("网格计划计算失败: %s", e)
+
+    # 8. 如果是回测模式，执行回测模拟
+    backtest_result = None
+    if req.mode == "backtest":
+        # 使用完整的策略配置（包含 tiers 等）
+        full_config = load_strategy_config()
+        # 将前端传入的参数应用到配置中，确保回测使用的是当前调节的参数
+        full_config.regime_filter = rf_config
+        
+        bt = BacktestEngine(strategy_cfg=full_config)
+        # 运行回测
+        try:
+            raw_res = bt.run(df)
+            backtest_result = BacktestOutput(**raw_res)
+        except Exception as e:
+            logger.error("回测执行失败: %s", e)
+
     return RegimeResponse(
         candles=candles,
         segments=segments,
@@ -375,8 +431,23 @@ def compute_regime(req: RegimeRequest):
         mode=req.mode,
         symbol=req.symbol,
         timeframe=req.timeframe,
+        backtest=backtest_result,
+        grid_plan=grid_plan
     )
 
+
+# 数据库实例
+db_handler = DatabaseHandler()
+
+@app.get("/api/history/trades")
+def get_history_trades(limit: int = 100):
+    """获取历史成交记录"""
+    return db_handler.get_trades(limit=limit)
+
+@app.get("/api/history/stats")
+def get_history_stats():
+    """获取历史统计数据"""
+    return db_handler.get_stats()
 
 @app.get("/", response_class=HTMLResponse)
 def serve_frontend():
@@ -385,3 +456,11 @@ def serve_frontend():
     if not html_path.exists():
         raise HTTPException(status_code=404, detail="前端文件未找到")
     return HTMLResponse(content=html_path.read_text(encoding="utf-8"))
+
+# Resolve deferred types for Pydantic compatible with future annotations
+try:
+    BacktestOutput.model_rebuild()
+    GridPlan.model_rebuild()
+    RegimeResponse.model_rebuild()
+except Exception:
+    pass

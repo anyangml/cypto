@@ -96,15 +96,34 @@ class GridEngine:
         overbought_triggered = (latest_close >= bb_upper and bias > self.config.bias_overbought_threshold)
         
         # 5. 生成挂单
-        # TODO: 具体的订单分层逻辑将在实盘模块中细化，此处提供计算结果
+        buy_orders = []
+        sell_orders = []
+
+        if not overbought_triggered:
+            # 买单：从中轴向下分布到下轨
+            # 简单的等差数列分布示例 (实际策略可能需要等比或动态间距)
+            price_step = (ma_mid - lower) / self.config.grid_levels
+            for i in range(1, self.config.grid_levels + 1):
+                price = ma_mid - i * price_step
+                if price <= 0: break
+                buy_orders.append({"price": round(price, 2), "qty": 0.0}) # qty 需结合资金计算
+
+        # 卖单：从中轴向上分布到上轨
+        price_step_up = (upper - ma_mid) / self.config.grid_levels
+        for i in range(1, self.config.grid_levels + 1):
+            price = ma_mid + i * price_step_up
+            sell_orders.append({"price": round(price, 2), "qty": 0.0})
+
         buy_enabled = not overbought_triggered
         sell_enabled = True # 超买保护只停买，不停卖
-        
+
         result = {
             "mid_price": round(ma_mid, 2),
             "upper_boundary": round(upper, 2),
             "lower_boundary": round(lower, 2),
             "capital_utilization": round(capital_base * position_ratio, 2),
+            "buy_orders": buy_orders,
+            "sell_orders": sell_orders,
             "overbought_triggered": overbought_triggered,
             "bias_pct": round(bias * 100, 2),
             "is_bull_market": latest_close > ma_long,

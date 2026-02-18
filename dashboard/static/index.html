@@ -759,6 +759,11 @@
           <span class="auto-label">AUTO</span>
         </label>
 
+        <label class="auto-toggle" id="grid-toggle-ui" style="margin-right:12px">
+          <input type="checkbox" id="chk-show-grid">
+          <span class="auto-label">GRID</span>
+        </label>
+
         <button id="btn-run" onclick="runAnalysis()">▶ RUN</button>
       </div>
     </header>
@@ -797,7 +802,10 @@
       <div class="sidebar-tabs">
         <button class="tab-btn active" onclick="switchTab('metrics')">METRICS</button>
         <button class="tab-btn" onclick="switchTab('params')">PARAMS</button>
+        <button class="tab-btn" onclick="switchTab('history')">HISTORY</button>
       </div>
+
+      <!-- ── Tab: Metrics ────────────────────────────── -->
 
       <!-- Metrics tab -->
       <div class="tab-pane active" id="tab-metrics">
@@ -842,6 +850,17 @@
           </div>
           <div style="text-align:right">
             <span class="spot-accum-badge" id="badge-spot-accum">PROFIT TO BTC</span>
+          </div>
+        </div>
+
+        <!-- Backtest Metrics (Hidden by default) -->
+        <div class="pos-ratio-badge" id="backtest-metrics"
+          style="display:none; margin-top: 8px; border: 1px dashed #f39c12; background: rgba(243, 156, 18, 0.05);">
+          <div style="width:100%">
+            <div style="font-size:10px;color:#f39c12;margin-bottom:4px;font-weight:600">STRATEGY PERFORMANCE</div>
+            <div style="font-size:11px;line-height:1.4" id="m-bt-stats">
+              Run Backtest to see results
+            </div>
           </div>
         </div>
 
@@ -938,6 +957,37 @@
 
         <button class="btn-reset" onclick="resetParams()">↺ Reset to Defaults</button>
       </div>
+
+      <!-- ── Tab: History ────────────────────────────── -->
+      <div class="tab-pane" id="tab-history">
+        <div class="metrics-grid" style="grid-template-columns: 1fr 1fr; margin-bottom:12px;">
+          <div class="metric-card">
+            <div class="metric-label">Total Trades</div>
+            <div class="metric-value" id="h-total-trades">-</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-label">Volume (USDT)</div>
+            <div class="metric-value" id="h-total-vol">-</div>
+          </div>
+        </div>
+
+        <div style="font-size:11px;color:var(--text-2);margin-bottom:8px">RECENT TRADES</div>
+        <div style="overflow-y:auto; flex:1; border:1px solid var(--border); border-radius:4px;">
+          <table style="width:100%; border-collapse:collapse; font-size:10px;">
+            <thead style="position:sticky; top:0; background:var(--bg-2);">
+              <tr style="color:var(--text-2); text-align:left;">
+                <th style="padding:6px;">Time</th>
+                <th style="padding:6px;">Side</th>
+                <th style="padding:6px;">Price</th>
+                <th style="padding:6px;text-align:right">Qty</th>
+              </tr>
+            </thead>
+            <tbody id="history-table-body">
+              <!-- Rows inserted by JS -->
+            </tbody>
+          </table>
+        </div>
+      </div>
     </aside>
 
   </div>
@@ -951,6 +1001,8 @@
     let chart = null;
     let candleSeries = null;
     let seriesMarkers = [];
+    let gridLines = [];
+    let lastGridPlan = null;
 
     const DEFAULTS = {
       adx_period: 14, adx_trend_threshold: 25.0, adx_fuse_threshold: 30.0,
@@ -1031,6 +1083,42 @@
       });
       document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
       document.getElementById('tab-' + tab).classList.add('active');
+
+      if (tab === 'history') {
+        loadHistory();
+      }
+    }
+
+    async function loadHistory() {
+      try {
+        // Trades
+        const resTrades = await fetch('/api/history/trades?limit=50').then(r => r.json());
+        const tbody = document.getElementById('history-table-body');
+        tbody.innerHTML = '';
+
+        resTrades.forEach(t => {
+          const tr = document.createElement('tr');
+          const isBuy = t.side.toLowerCase() === 'buy';
+          const timeStr = new Date(t.timestamp).toLocaleTimeString();
+          const color = isBuy ? '#00e676' : '#ff4d6d';
+
+          tr.innerHTML = `
+                  <td style="padding:6px;color:var(--text-2)">${timeStr}</td>
+                  <td style="padding:6px;color:${color};font-weight:600">${t.side.toUpperCase()}</td>
+                  <td style="padding:6px;">${parseFloat(t.price).toFixed(2)}</td>
+                  <td style="padding:6px;text-align:right">${parseFloat(t.qty).toFixed(4)}</td>
+                `;
+          tbody.appendChild(tr);
+        });
+
+        // Stats
+        const resStats = await fetch('/api/history/stats').then(r => r.json());
+        document.getElementById('h-total-trades').innerText = resStats.total_trades;
+        document.getElementById('h-total-vol').innerText = resStats.total_volume.toLocaleString();
+
+      } catch (e) {
+        console.error("Failed to load history", e);
+      }
     }
 
     // ── Collect params ────────────────────────────────────────────────
@@ -1267,8 +1355,24 @@
         renderRegimeBands(data.segments);
         renderTimeline(data.segments);
 
+        // Store grid plan
+        lastGridPlan = data.grid_plan;
+        if (document.getElementById('chk-show-grid').checked && lastGridPlan) {
+          renderGrid(lastGridPlan);
+        } else {
+          clearGrid();
+        }
+
         // Metrics
         renderMetrics(data.latest);
+
+        if (data.backtest) {
+          renderBacktest(data.backtest);
+        } else {
+          const m = document.getElementById('backtest-metrics');
+          if (m) m.style.display = 'none';
+          if (candleSeries) candleSeries.setMarkers([]);
+        }
 
         // Auto-switch to metrics tab
         switchTab('metrics');
@@ -1285,9 +1389,144 @@
       }
     }
 
+    function renderBacktest(bt) {
+      // 1. 显示 Metrics
+      const stats = bt.metrics;
+      const metricsDiv = document.getElementById('backtest-metrics');
+      metricsDiv.style.display = 'flex';
+      document.getElementById('m-bt-stats').innerHTML = `
+            Return: <span style="color:${stats.total_return_pct >= 0 ? '#00b894' : '#ff7675'}">${stats.total_return_pct}%</span><br>
+            MaxDD: <span style="color:#ff7675">${stats.max_drawdown_pct}%</span> | Trades: ${stats.trade_count}
+        `;
+
+      // 2. 在主图绘制买卖标记 (Markers)
+      // 过滤掉不在当前可见范围内太多的点以免卡顿 (Lightweight Charts 处理能力很强，通常不用担心)
+      const markers = bt.trades.map(t => ({
+        time: t.time,
+        position: t.side === 'buy' ? 'belowBar' : 'aboveBar',
+        color: t.side === 'buy' ? '#00b894' : '#ff7675',
+        shape: t.side === 'buy' ? 'arrowUp' : 'arrowDown',
+        text: t.side.toUpperCase() + ' @ ' + t.price
+      }));
+      candleSeries.setMarkers(markers);
+
+      // 3. 在副图绘制 PnL 曲线 (覆盖原有指标)
+      const pnlData = bt.equity_curve.map(p => ({
+        time: p.time,
+        value: p.value
+      }));
+
+      indicatorSeries.setData(pnlData);
+      indicatorSeries.applyOptions({
+        color: '#f39c12',
+        lineWidth: 2,
+        title: 'Equity (USDT)'
+      });
+    }
+
+    function renderBacktest(bt) {
+      // 1. 显示 Metrics
+      const stats = bt.metrics;
+      const metricsDiv = document.getElementById('backtest-metrics');
+      if (metricsDiv) {
+        metricsDiv.style.display = 'flex';
+        document.getElementById('m-bt-stats').innerHTML = `
+                <div style="display:flex;justify-content:space-between">
+                    <span>Return:</span> <span style="color:${stats.total_return_pct >= 0 ? '#00e676' : '#ff4d6d'}">${stats.total_return_pct}%</span>
+                </div>
+                <div style="display:flex;justify-content:space-between">
+                    <span>MaxDD:</span> <span style="color:#ff4d6d">${stats.max_drawdown_pct}%</span>
+                </div>
+                <div style="display:flex;justify-content:space-between">
+                    <span>Trades:</span> <span>${stats.trade_count}</span>
+                </div>
+            `;
+      }
+
+      // 2. 在主图绘制买卖标记 (Markers)
+      if (candleSeries) {
+        const markers = bt.trades.map(t => ({
+          time: t.time,
+          position: t.side === 'buy' ? 'belowBar' : 'aboveBar',
+          color: t.side === 'buy' ? '#00e676' : '#ff4d6d',
+          shape: t.side === 'buy' ? 'arrowUp' : 'arrowDown',
+          text: t.side.toUpperCase() + ' @ ' + t.price
+        }));
+        candleSeries.setMarkers(markers);
+      }
+
+      // 3. 在副图绘制 PnL 曲线
+      if (indicatorSeries) {
+        const pnlData = bt.equity_curve.map(p => ({
+          time: p.time,
+          value: p.value
+        }));
+
+        indicatorSeries.setData(pnlData);
+        indicatorSeries.applyOptions({
+          color: '#f39c12',
+          lineWidth: 2,
+          title: 'Equity (USDT)'
+          // 注意：这里没有还原原本的指标。如果用户切回其他 TAB 再切回来可能会乱。
+          // 暂时就这样，因为是 Demo 性质。
+        });
+      }
+    }
+
+    function clearGrid() {
+      if (!candleSeries) return;
+      gridLines.forEach(l => candleSeries.removePriceLine(l));
+      gridLines = [];
+    }
+
+    function renderGrid(plan) {
+      clearGrid();
+      if (!plan) return;
+
+      const createLine = (price, color, title, style = 1) => { // style 1=Solid, 2=Dashed
+        const l = candleSeries.createPriceLine({
+          price: price,
+          color: color,
+          lineWidth: 1,
+          lineStyle: style,
+          axisLabelVisible: true,
+          title: title,
+        });
+        gridLines.push(l);
+      };
+
+      // Middle & Boundaries
+      createLine(plan.mid_price, '#f1c40f', 'Mid', 2);
+      createLine(plan.upper_boundary, '#9b59b6', 'Upper', 1);
+      createLine(plan.lower_boundary, '#9b59b6', 'Lower', 1);
+
+      // Buy Orders
+      if (plan.buy_orders) {
+        plan.buy_orders.forEach((o, i) => {
+          createLine(o.price, 'rgba(0, 230, 118, 0.6)', `B${i + 1}`, 2); // Dashed Green
+        });
+      }
+
+      // Sell Orders
+      if (plan.sell_orders) {
+        plan.sell_orders.forEach((o, i) => {
+          createLine(o.price, 'rgba(255, 77, 109, 0.6)', `S${i + 1}`, 2); // Dashed Red
+        });
+      }
+    }
+
     // ── Boot ──────────────────────────────────────────────────────────
     window.addEventListener('DOMContentLoaded', () => {
       initChart();
+
+      // Grid toggle listener
+      document.getElementById('chk-show-grid').addEventListener('change', (e) => {
+        if (e.target.checked && lastGridPlan) {
+          renderGrid(lastGridPlan);
+        } else {
+          clearGrid();
+        }
+      });
 
       // Load defaults from API
       fetch('/api/config')

@@ -166,21 +166,23 @@ class RegimeFilter:
         >>> print(result.regime)  # MarketRegime.RANGE 或 MarketRegime.TREND
     """
 
-    def __init__(self, config: Optional[RegimeFilterConfig] = None) -> None:
+    def __init__(self, config: Optional[RegimeFilterConfig] = None, tiers: Optional[list] = None) -> None:
         self.config = config or RegimeFilterConfig()
-        logger.info("RegimeFilter 初始化完成 | 配置: %s", self.config)
+        self.tiers = tiers or []
+        logger.info("RegimeFilter 初始化完成 | 配置: %s | 分级规则数: %d", self.config, len(self.tiers))
 
     # ------------------------------------------------------------------
     # 公开接口
     # ------------------------------------------------------------------
 
-    def get_market_regime(self, df: pd.DataFrame) -> RegimeResult:
+    def get_market_regime(self, df: pd.DataFrame, verbose: bool = True) -> RegimeResult:
         """
         对传入的 OHLCV DataFrame 的最新时间点进行市场状态判断。
 
         Args:
             df: 包含 [open, high, low, close, volume] 列的 DataFrame，
                 行数需满足各指标的最小计算周期。
+            verbose: 是否输出详细日志。
 
         Returns:
             RegimeResult 对象，包含最终状态和各指标的详细数值。
@@ -220,10 +222,12 @@ class RegimeFilter:
         )
 
         # 震荡增强：必须满足 Hurst < 0.5 且 ADX < 25
-        if regime == MarketRegime.RANGE:
-            if not (hurst_val < 0.5 and adx_val < 25):
-                 # 如果投票是 RANGE 但未能满足严苛条件，退化为 TREND/WAIT
-                 regime = MarketRegime.TREND 
+        # 震荡增强：Hurst < 0.5 且 ADX < 25
+        # v2.1 修正：不再强制修改 regime 为 TREND，而是仅作为一种状态标记或用于日志
+        # PRD 设计原意是 "Grid ON" 条件，而非 "Regime is RANGE" 的唯一条件
+        # 如果 adx_val > 25 或 hurst > 0.5，但投票结果仍是 RANGE，则维持 RANGE 状态
+        # 具体的开仓约束交由 position_ratio 控制（例如 hurst>0.55 时 pos=0）
+        pass
 
         # 如果触发熔断，状态强制为 FUSE
         if fuse_triggered:
@@ -233,22 +237,35 @@ class RegimeFilter:
         position_ratio = 1.0
         accumulate_spot = False
 
-        if hurst_val < self.config.hurst_extreme_low:
-            # 极低 Hurst (< 0.35)：反弹/变盘前兆，100% 仓位 + 利润转现货
-            position_ratio = 1.0
-            accumulate_spot = True
-        elif hurst_val < 0.4:
-            position_ratio = 1.0
-        elif hurst_val < 0.5:
-            position_ratio = 1.0
-        elif hurst_val < 0.55:
-            # 接近 0.5 随机游走，50% 仓位
-            position_ratio = 0.5
+        if self.tiers:
+            # 使用配置中的动态分级表 (Strategy v2.0)
+            # 找到第一个满足 hurst_val <= tier.hurst_max 的层级
+            selected_tier = None
+            for tier in self.tiers:
+                if hurst_val <= tier.hurst_max:
+                    selected_tier = tier
+                    break
+            
+            # 如果 Hurst 超过了所有层级的上限（即 >= 最后一层的 hurst_max），应当停止
+            if selected_tier:
+                position_ratio = selected_tier.position_ratio
+                accumulate_spot = selected_tier.accumulate_spot
+            else:
+                position_ratio = 0.0
+                accumulate_spot = False
+
         else:
-            # Hurst 较高或趋势性，0 仓位
-            position_ratio = 0.0
-            if regime == MarketRegime.RANGE:
-                 regime = MarketRegime.TREND # 修正状态
+            # Fallback: 硬编码默认逻辑 (仅当未传入 tiers 时使用)
+            if hurst_val < self.config.hurst_extreme_low:
+                position_ratio = 1.0
+                accumulate_spot = True
+            elif hurst_val < 0.55:
+                # 线性衰减或阶梯衰减示例
+                position_ratio = 1.0 if hurst_val < 0.5 else 0.5
+                accumulate_spot = False
+            else:
+                position_ratio = 0.0
+                accumulate_spot = False
 
         # 强制修正：如果熔断或趋势判断明确，仓位清零（除非是极低 Hurst，但通常极低 Hurst 不会触发熔断）
         if regime in [MarketRegime.TREND, MarketRegime.FUSE]:
@@ -270,7 +287,8 @@ class RegimeFilter:
             trend_votes=trend_votes,
             total_votes=4,
         )
-        logger.info("Regime 判断结果: %s", result)
+        if verbose:
+            logger.info("Regime 判断结果: %s", result)
         return result
 
     def scan_dataframe(self, df: pd.DataFrame) -> pd.Series:
@@ -292,11 +310,19 @@ class RegimeFilter:
             self.config.hurst_period,
         )
 
+        
+        # 优化：限制窗口大小，避免 O(N^2)
+        # 取最大需要的周期 + 缓冲
+        window_size = min_required + 200 
+
         regimes = pd.Series(index=df.index, dtype=object)
         for i in range(min_required, len(df) + 1):
-            window = df.iloc[:i]
+            # i 是结束索引（不包含），起始索引向前推
+            start_idx = max(0, i - window_size)
+            window = df.iloc[start_idx:i]
+            
             try:
-                result = self.get_market_regime(window)
+                result = self.get_market_regime(window, verbose=False)
                 regimes.iloc[i - 1] = result.regime.value
             except ValueError:
                 pass

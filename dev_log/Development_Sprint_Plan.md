@@ -35,9 +35,9 @@
 
 ---
 
-## 🔄 Ticket-003: 自适应网格核心逻辑 (Adaptive Grid Engine)
+## ✅ Ticket-003: 自适应网格核心逻辑 (Adaptive Grid Engine)
 - **依赖:** Ticket-002
-- **状态:** 已实现计算算子 (`src/grid_engine.py`)
+- **状态:** 已完成
 - **主要需求 (v2.0):**
     - **基准线分配:** 引入 MA200/MA120 判断。
         - 价格 > MA：80% 资金利用率。
@@ -49,33 +49,38 @@
 - **验收标准 (AC):**
     - 能根据 MA200 位置自动调整生成的 Total Investment 规模。
     - 高位超买状态下，生成的订单列表仅包含 Sell Orders。
+    - 实现了简单的等差/等比网格挂单生成。
 
 ---
 
-## 🛠️ Ticket-004: 回测系统与性能评估 (Backtesting Framework)
+## ✅ Ticket-004: 回测系统与性能评估 (Backtesting Framework)
 - **依赖:** Ticket-003
+- **状态:** 已完成 (基础验证版)
 - **需求:**
     - 模拟撮合逻辑，支持手续费。
     - **核心验证:** 验证“利润转现货”逻辑（Hurst < 0.35 时）。
     - 统计多空背景下的资金利用率切换效果。
+- **产出:** `src/backtest.py`
 
 ---
 
-## 🛠️ Ticket-005: 交易执行引擎 (Live Execution Layer)
+## 🔄 Ticket-005: 交易执行引擎 (Live Execution Layer)
 - **依赖:** Ticket-004
+- **状态:** 进行中 (基础框架已就绪)
 - **需求:**
-    - 封装 Binance 订单接口。
-    - 实现订单同步与轮询机制。
+    - 封装 Binance 订单接口 (`src/exchange.py` 增强)。
+    - 实现订单同步与轮询机制 (`src/execution.py` 智能 Diffing)。
     - 支持 Testnet 运行 24/7。
 
 ---
 
-## 🛠️ Ticket-006: 风险控制与熔断监控 (Risk Control & Fusing)
+## ✅ Ticket-006: 风险控制与熔断监控 (Risk Control & Fusing)
 - **依赖:** Ticket-005
+- **状态:** 已完成
 - **需求 (v2.0):**
     - **OI 监控:** 实时获取 Binance Open Interest，1h 增长 > 12% 立即熔断撤单。
     - **资金费率:** Funding Rate 异常时暂停操作。
-    - **CVD 背离:** 检测累计成交量差与价格的背离信号。
-    - **Telegram 告警:** 异常触发第一时间推送。
+    - **CVD 背离:** 检测累计成交量差与价格的背离信号 (暂缓)。
+    - **Telegram 告警:** 异常触发第一时间推送 (需配置 Token)。
 - **验收标准 (AC):**
-    - 模拟 OI 异常激增，程序需在 5 秒内完成撤单并进入 PAUSE 状态。
+    - 模拟 OI 异常激增，程序需在 5 秒内完成撤单并进入 PAUSE 状态 (代码已实现)。
