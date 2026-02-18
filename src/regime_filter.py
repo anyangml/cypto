@@ -31,7 +31,8 @@ logger = setup_logger("regime_filter")
 class MarketRegime(str, Enum):
     """市场状态枚举。"""
     RANGE = "RANGE"  # 横盘震荡，适合网格
-    TREND = "TREND"  # 单边趋势，暂停网格
+    TREND = "TREND"  # 单边趋势，暂停新开网格
+    FUSE  = "FUSE"   # 熔断状态，紧急停止所有操作
 
 
 class RegimeFilterConfig(BaseModel):
@@ -42,7 +43,8 @@ class RegimeFilterConfig(BaseModel):
 
     # --- ADX ---
     adx_period: int = Field(default=14, ge=2, description="ADX 计算周期")
-    adx_trend_threshold: float = Field(default=25.0, gt=0, le=100, description="ADX 超过此值视为趋势")
+    adx_trend_threshold: float = Field(default=25.0, gt=0, le=100, description="ADX 超过此值视为非震荡")
+    adx_fuse_threshold: float = Field(default=30.0, gt=0, le=100, description="ADX 超过此值需联合熔断")
 
     # --- ATR 比例 ---
     atr_short_period: int = Field(default=7, ge=2, description="短期 ATR 周期")
@@ -56,7 +58,9 @@ class RegimeFilterConfig(BaseModel):
 
     # --- Hurst Exponent ---
     hurst_period: int = Field(default=100, ge=20, description="Hurst 指数计算所需的最少数据点")
-    hurst_threshold: float = Field(default=0.5, gt=0, lt=1, description="Hurst 超过此值视为趋势")
+    hurst_threshold: float = Field(default=0.5, gt=0, lt=1, description="Hurst 低于此值代表适合网格")
+    hurst_fuse_threshold: float = Field(default=0.6, gt=0, lt=1, description="Hurst 超过此值需联合熔断")
+    hurst_extreme_low: float = Field(default=0.35, gt=0, lt=1, description="Hurst 低于此值触发利润转现货")
 
     # --- 投票机制 ---
     trend_vote_threshold: int = Field(default=2, ge=1, le=4, description="判断为趋势所需的最少投票数")
@@ -121,6 +125,10 @@ class RegimeFilterConfig(BaseModel):
 class RegimeResult:
     """单次 Regime 判断的详细结果，便于调试和日志记录。"""
     regime: MarketRegime
+    position_ratio: float   # 分级仓位比例 (0.0 to 1.0)
+    accumulate_spot: bool   # 是否开启利润转现货 BTC
+    fuse_triggered: bool    # 是否由于 Hurst/ADX 触发了熔断
+    
     adx_value: float
     adx_vote: bool          # True = 趋势
     atr_ratio: float
@@ -135,6 +143,8 @@ class RegimeResult:
     def __str__(self) -> str:
         return (
             f"Regime={self.regime.value} | "
+            f"Pos={self.position_ratio:.0%} | "
+            f"SpotAccum={'ON' if self.accumulate_spot else 'OFF'} | "
             f"ADX={self.adx_value:.2f}({'T' if self.adx_vote else 'R'}) | "
             f"ATR_ratio={self.atr_ratio:.3f}({'T' if self.atr_vote else 'R'}) | "
             f"BB_width={self.bb_width:.4f}({'T' if self.bb_vote else 'R'}) | "
@@ -174,9 +184,6 @@ class RegimeFilter:
 
         Returns:
             RegimeResult 对象，包含最终状态和各指标的详细数值。
-
-        Raises:
-            ValueError: 数据行数不足以计算指标时抛出。
         """
         min_required = max(
             self.config.adx_period * 2,
@@ -189,26 +196,69 @@ class RegimeFilter:
                 f"数据行数不足：需要至少 {min_required} 行，当前只有 {len(df)} 行。"
             )
 
+        # 1. 计算指标数值
         adx_val = self._calc_adx(df)
         atr_ratio = self._calc_atr_ratio(df)
         bb_width = self._calc_bb_width(df)
         hurst_val = self._calc_hurst(df)
 
+        # 2. 投票判断 (传统的四指标投票)
         adx_vote = adx_val > self.config.adx_trend_threshold
         atr_vote = atr_ratio > self.config.atr_ratio_threshold
         bb_vote = bb_width > self.config.bb_width_threshold
         hurst_vote = hurst_val > self.config.hurst_threshold
-
         trend_votes = sum([adx_vote, atr_vote, bb_vote, hurst_vote])
-        total_votes = 4
+
+        # 3. v2.0 逻辑：核心开关与熔断
+        fuse_triggered = (hurst_val > self.config.hurst_fuse_threshold and adx_val > self.config.adx_fuse_threshold)
+        
+        # 默认基于投票
         regime = (
             MarketRegime.TREND
             if trend_votes >= self.config.trend_vote_threshold
             else MarketRegime.RANGE
         )
 
+        # 震荡增强：必须满足 Hurst < 0.5 且 ADX < 25
+        if regime == MarketRegime.RANGE:
+            if not (hurst_val < 0.5 and adx_val < 25):
+                 # 如果投票是 RANGE 但未能满足严苛条件，退化为 TREND/WAIT
+                 regime = MarketRegime.TREND 
+
+        # 如果触发熔断，状态强制为 FUSE
+        if fuse_triggered:
+            regime = MarketRegime.FUSE
+
+        # 4. 分级仓位响应 (Tiered Response based on Hurst)
+        position_ratio = 1.0
+        accumulate_spot = False
+
+        if hurst_val < self.config.hurst_extreme_low:
+            # 极低 Hurst (< 0.35)：反弹/变盘前兆，100% 仓位 + 利润转现货
+            position_ratio = 1.0
+            accumulate_spot = True
+        elif hurst_val < 0.4:
+            position_ratio = 1.0
+        elif hurst_val < 0.5:
+            position_ratio = 1.0
+        elif hurst_val < 0.55:
+            # 接近 0.5 随机游走，50% 仓位
+            position_ratio = 0.5
+        else:
+            # Hurst 较高或趋势性，0 仓位
+            position_ratio = 0.0
+            if regime == MarketRegime.RANGE:
+                 regime = MarketRegime.TREND # 修正状态
+
+        # 强制修正：如果熔断或趋势判断明确，仓位清零（除非是极低 Hurst，但通常极低 Hurst 不会触发熔断）
+        if regime in [MarketRegime.TREND, MarketRegime.FUSE]:
+            position_ratio = 0.0
+
         result = RegimeResult(
             regime=regime,
+            position_ratio=position_ratio,
+            accumulate_spot=accumulate_spot,
+            fuse_triggered=fuse_triggered,
             adx_value=adx_val,
             adx_vote=adx_vote,
             atr_ratio=atr_ratio,
@@ -218,7 +268,7 @@ class RegimeFilter:
             hurst_value=hurst_val,
             hurst_vote=hurst_vote,
             trend_votes=trend_votes,
-            total_votes=total_votes,
+            total_votes=4,
         )
         logger.info("Regime 判断结果: %s", result)
         return result

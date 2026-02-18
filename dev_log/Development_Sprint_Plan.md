@@ -1,101 +1,81 @@
-# 开发冲刺计划 (Development Sprint Plan) - Binance BTC 自适应网格策略
+# 开发冲刺计划 (Development Sprint Plan) - Binance BTC 自适应网格策略 (v2.0)
 
-本计划将策略开发拆分为 6 个连续的功能 Ticket，每个 Ticket 均建立在前一个 Ticket 完成的基础上。
-
----
-
-## Ticket-001: 基础架构与行情数据模块 (Project Foundation)
-- **依赖:** 无
-- **需求:**
-    - 初始化 Python 开发环境（CCXT, Pandas, Logging）。
-    - 实现抽象的交易所连接层，支持通过配置文件读取 Binance API Key/Secret。
-    - 实现行情抓取功能：能够从币安获取历史 K 线数据（用于回测）和实时 K 线（用于实盘）。
-- **验收标准 (AC):**
-    - 成功连接币安 API 并能打印当前账户余额。
-    - 能够下载过去 30 天的 BTC/USDT 1h K 线数据并保存为 CSV。
-    - 统一的日志系统能够记录 `INFO` 和 `ERROR` 级别信息。
+本计划将策略开发拆分为 6 个连续的功能 Ticket，以及辅助的调试工具。本版本已根据最新策略调整进行同步。
 
 ---
 
-## Ticket-002: 市场状态过滤器算子 (Regime Filter Implementation)
-- **依赖:** Ticket-001
-- **需求:**
-    - 实现 `RegimeFilter` 类。
-    - 集成逻辑：计算 ADX, ATR, Bollinger Bands 宽度和 Hurst 指数。
-    - 实现核心判断函数 `get_market_regime()`：返回 `RANGE` (震荡) 或 `TREND` (趋势)。
-- **验收标准 (AC):**
-    - 输入一段历史 K 线数据，能够准确输出每个时间点的市场状态（0 为震荡，1 为趋势）。
-    - 提供单元测试，验证在明显的单边行情和横盘行情下，过滤器输出符合预期。
+## ✅ Ticket-001: 基础架构与行情数据模块 (Project Foundation)
+- **状态:** 已完成
+- **核心功能:**
+    - 初始化 Python 环境，实现 `ExchangeClient` 封装 CCXT。
+    - 支持 `testnet` 和 `live` 模式切换。
+    - 实现 K 线抓取 (`fetch_ohlcv`) 及增量更新逻辑。
 
 ---
 
-## Ticket-003: 自适应网格核心逻辑 (Adaptive Grid Engine)
+## ✅ Ticket-002: 市场状态过滤器算子 (Regime Filter Implementation)
+- **状态:** 已完成 (v2.0)
+- **核心功能:**
+    - 实现 `RegimeFilter` 类，计算 ADX, ATR, BB, Hurst。
+    - **v2.0 实现:** 
+        - 引入 `Hurst < 0.5 & ADX < 25` 作为震荡入场条件。
+        - 引入 `Hurst > 0.6 & ADX > 30` 作为趋势熔断条件。
+        - 支持分级响应逻辑输出（Hurst 不同区间对应的仓位建议）。
+        - 支持 `Hurst < 0.35` 触发利润转现货建议。
+
+---
+
+## ✅ Ticket-ADH-001: 策略可视化调试面板 (Visualization Dashboard)
+- **状态:** 已完成 (v2.0)
+- **核心功能:**
+    - 支持展示 MA200/MA120/MA60 基准线（后端逻辑已备）。
+    - 侧边栏增加仓位利用率（Hurst 分级结果）显示。
+    - 增加“利润转现货 (PROFIT TO BTC)”状态指示。
+    - 全参数实时调参支持。
+
+---
+
+## 🔄 Ticket-003: 自适应网格核心逻辑 (Adaptive Grid Engine)
 - **依赖:** Ticket-002
-- **需求:**
-    - 开发网格逻辑算子：根据当前价格、ATR 波动率自动计算网格步长和层级。
-    - 实现“中轴线动态调整”：网格基准价格随 EMA 缓慢漂移。
-    - 定义订单管理逻辑：挂单价格计算、平衡买卖单对（Buy-Sell Pairs）。
+- **状态:** 已实现计算算子 (`src/grid_engine.py`)
+- **主要需求 (v2.0):**
+    - **基准线分配:** 引入 MA200/MA120 判断。
+        - 价格 > MA：80% 资金利用率。
+        - 价格 < MA：30% 资金利用率。
+    - **动态区间:** 使用 `Current_Price ± 3 * ATR` 锁定网格上下界。
+    - **中轴线:** 以 MA20 为中轴进行动态偏移。
+    - **单向保护:** 
+        - 触碰 BB 2.5σ 上轨 且 MA 偏离度 > 5% → **只卖不买**。
 - **验收标准 (AC):**
-    - 逻辑层能够计算出具体的挂单价格列表（List of Limit Prices）。
-    - 当 ATR 增大时，计算出的网格间距必须相应变宽。
+    - 能根据 MA200 位置自动调整生成的 Total Investment 规模。
+    - 高位超买状态下，生成的订单列表仅包含 Sell Orders。
 
 ---
 
-## Ticket-004: 回测系统与可视化分析 (Backtesting Framework)
-- **依赖:** Ticket-003, Ticket-002
+## 🛠️ Ticket-004: 回测系统与性能评估 (Backtesting Framework)
+- **依赖:** Ticket-003
 - **需求:**
-    - 构建一个基于历史数据的回测模拟器。
-    - 模拟撮合逻辑：根据历史 K 线的高低点判断网格订单是否成交。
-    - 性能评估：计算累计收益、最大回撤、夏普比率。
-    - 可视化：使用 Matplotlib 或 Plotly 绘制收益曲线，并标注 Regime Filter 的切换点。
-- **验收标准 (AC):**
-    - 回测报告需输出最终净值、胜率和最大回撤百分比。
-    - 图表中清晰显示在何处策略因“检测到趋势”而停止了网格操作。
+    - 模拟撮合逻辑，支持手续费。
+    - **核心验证:** 验证“利润转现货”逻辑（Hurst < 0.35 时）。
+    - 统计多空背景下的资金利用率切换效果。
 
 ---
 
-## Ticket-005: 交易执行引擎 (Live Execution Layer)
-- **依赖:** Ticket-004, Ticket-001
+## 🛠️ Ticket-005: 交易执行引擎 (Live Execution Layer)
+- **依赖:** Ticket-004
 - **需求:**
-    - 将网格算子对接真实的 Binance 订单接口（限价单）。
-    - 实现订单跟踪逻辑：轮询或通过 WebSocket 监听订单成交状态。
-    - 实现“挂卖补买/挂买补卖”的循环逻辑。
-- **验收标准 (AC):**
-    - 在 Binance Testnet (测试网) 上成功运行 24 小时，无程序崩溃。
-    - 能够自动处理部分成交订单，并在订单成交后立即挂出对冲平仓单。
+    - 封装 Binance 订单接口。
+    - 实现订单同步与轮询机制。
+    - 支持 Testnet 运行 24/7。
 
 ---
 
-## Ticket-006: 风险控制与告警监控 (Risk Control & Monitoring)
+## 🛠️ Ticket-006: 风险控制与熔断监控 (Risk Control & Fusing)
 - **依赖:** Ticket-005
-- **需求:**
-    - 实现全局止损触发器：当资产跌破预设阈值时，撤销所有网格单并市价平仓。
-    - 实现趋势强保护：若 Regime Filter 持续输出趋势信号，自动暂停所有新开网格。
-    - 接入 Telegram/Discord API：实时推送交易状态、每日盈亏报告及异常告警。
+- **需求 (v2.0):**
+    - **OI 监控:** 实时获取 Binance Open Interest，1h 增长 > 12% 立即熔断撤单。
+    - **资金费率:** Funding Rate 异常时暂停操作。
+    - **CVD 背离:** 检测累计成交量差与价格的背离信号。
+    - **Telegram 告警:** 异常触发第一时间推送。
 - **验收标准 (AC):**
-    - 手动模拟一个大跌场景，策略必须能触发止损并发送告警通知。
-    - 每天定时发送一次包含当前持仓和总资产的 Daily Report。
-
----
-
-## Ticket-ADH-001: 策略可视化调试面板 (Strategy Visualization Dashboard)
-- **类型:** Ad-hoc / 调试工具
-- **依赖:** Ticket-001, Ticket-002
-- **需求:**
-    - 开发一个基于 Web 的可视化调试面板，支持两种数据模式：
-        - **回测模式 (Backtest)**：从 Binance Testnet 拉取历史 K 线数据进行分析。
-        - **实时模式 (Live)**：从 Binance 主网拉取实时数据，定时刷新。
-    - 核心功能：
-        - 绘制专业级 K 线图（Candlestick），使用 TradingView Lightweight Charts。
-        - 在 K 线图上叠加 Regime Filter 的判断结果（RANGE/TREND 区间着色）。
-        - 实时显示各指标数值：ADX、ATR 比例、BB Width、Hurst 指数及投票结果。
-        - 提供参数调整面板：可在 UI 上实时修改 RegimeFilterConfig 的所有参数并重新计算。
-    - 技术架构：
-        - **后端**：FastAPI，提供 REST API 供前端调用。
-        - **前端**：单页 HTML + Vanilla JS + TradingView Lightweight Charts。
-        - 风格：深色科技风，贴合 Crypto 交易终端美学。
-- **验收标准 (AC):**
-    - 能够切换回测/实时模式并正确拉取对应数据源的 K 线。
-    - K 线图上能够清晰标注 RANGE（绿色背景）和 TREND（红色背景）区间。
-    - 修改任意 Regime Filter 参数后，点击"重新计算"能立即更新图表和指标数值。
-    - 界面在 1440p 分辨率下布局整洁，无明显错位。
+    - 模拟 OI 异常激增，程序需在 5 秒内完成撤单并进入 PAUSE 状态。

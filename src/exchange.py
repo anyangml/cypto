@@ -134,6 +134,7 @@ class ExchangeClient:
         symbol: Optional[str] = None,
         timeframe: Optional[str] = None,
         since_days: int = 30,
+        since_ms: Optional[int] = None,
         limit: int = 1000,
     ) -> pd.DataFrame:
         """
@@ -142,26 +143,28 @@ class ExchangeClient:
         Args:
             symbol:     交易对，默认使用 Config 中的配置。
             timeframe:  K 线周期，默认使用 Config 中的配置。
-            since_days: 获取过去多少天的数据。
+            since_days: 获取过去多少天的数据（若未指定 since_ms）。
+            since_ms:   确定的起始时间戳（毫秒），若指定则忽略 since_days。
             limit:      单次请求最大条数（Binance 上限 1000）。
 
         Returns:
-            包含 [timestamp, open, high, low, close, volume] 列的 DataFrame，
+            包含 [timestamp, open, high, low, close, volume] 列 a DataFrame，
             timestamp 列已转换为 UTC datetime 类型并设为索引。
         """
         symbol = symbol or self._config.symbol
         timeframe = timeframe or self._config.timeframe
 
-        # 计算起始时间戳（毫秒）
-        since_ms = int(
-            (pd.Timestamp.utcnow() - pd.Timedelta(days=since_days)).timestamp() * 1000
-        )
+        # 计算起始时间戳（或者使用传入的 since_ms）
+        if since_ms is None:
+            since_ms = int(
+                (pd.Timestamp.utcnow() - pd.Timedelta(days=since_days)).timestamp() * 1000
+            )
 
         logger.info(
-            "开始获取 K 线数据 | 交易对: %s | 周期: %s | 天数: %d",
+            "开始获取 K 线数据 | 交易对: %s | 周期: %s | 起始时间戳: %s",
             symbol,
             timeframe,
-            since_days,
+            since_ms,
         )
 
         all_candles: list = []

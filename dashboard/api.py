@@ -15,6 +15,8 @@ import sys
 from pathlib import Path
 from typing import Optional, List
 
+import pandas as pd
+
 # 确保项目根目录在 Python 路径中
 ROOT = Path(__file__).parent.parent
 sys.path.insert(0, str(ROOT))
@@ -48,6 +50,77 @@ STATIC_DIR.mkdir(exist_ok=True)
 
 
 # ======================================================================
+# Data Manager (Caching & Incremental Fetching)
+# ======================================================================
+
+class DataManager:
+    """管理 K 线数据的缓存与增量更新。"""
+    def __init__(self):
+        # key: (mode, symbol, timeframe) -> value: pd.DataFrame
+        self._cache: dict[tuple[str, str, str], pd.DataFrame] = {}
+
+    def get_ohlcv(
+        self,
+        mode: str,
+        symbol: str,
+        timeframe: str,
+        since_days: int
+    ) -> pd.DataFrame:
+        key = (mode, symbol, timeframe)
+        now = pd.Timestamp.utcnow()
+        required_start_dt = now - pd.Timedelta(days=since_days)
+        required_start_ms = int(required_start_dt.timestamp() * 1000)
+
+        # 检查缓存是否可用
+        if key in self._cache:
+            df_cached = self._cache[key]
+            cached_start_ms = int(df_cached.index[0].timestamp() * 1000)
+            cached_end_ms = int(df_cached.index[-1].timestamp() * 1000)
+
+            # 只有当缓存包含所需的起始时间，且缓存数据相对“新鲜”时，才进行增量更新
+            # 如果缓存的最早时间晚于请求时间，说明缓存不够，需要重新拉取
+            if cached_start_ms <= required_start_ms:
+                # 增量拉取：从缓存的最后一根 K 线开始
+                logger.debug("使用缓存进行增量更新: %s", key)
+                try:
+                    exchange = _get_exchange(mode)
+                    # 从最后一条 K 线的时间戳开始拉取（CCXT fetch_ohlcv 会包含 since 时间戳的那一根）
+                    df_new = exchange.fetch_ohlcv(
+                        symbol=symbol,
+                        timeframe=timeframe,
+                        since_ms=cached_end_ms
+                    )
+                    
+                    if not df_new.empty:
+                        # 合并并去重（重复的那一根会被 keep="last" 覆盖为最新值）
+                        df_combined = pd.concat([df_cached, df_new])
+                        df_combined = df_combined[~df_combined.index.duplicated(keep="last")]
+                        df_combined.sort_index(inplace=True)
+                        self._cache[key] = df_combined
+                        
+                        # 返回用户请求的时间段
+                        return df_combined[df_combined.index >= required_start_dt]
+                    else:
+                        return df_cached[df_cached.index >= required_start_dt]
+                except Exception as e:
+                    logger.warning("增量更新失败，回退到全量拉取: %s", e)
+
+        # 全量拉取
+        logger.info("全量拉取数据: %s, days=%d", key, since_days)
+        exchange = _get_exchange(mode)
+        df = exchange.fetch_ohlcv(
+            symbol=symbol,
+            timeframe=timeframe,
+            since_days=since_days
+        )
+        self._cache[key] = df
+        return df
+
+# 全局单例
+data_manager = DataManager()
+
+
+# ======================================================================
 # Pydantic 请求/响应模型
 # ======================================================================
 
@@ -55,6 +128,7 @@ class RegimeParams(BaseModel):
     """前端传入的 Regime Filter 参数（全部可选，未传则使用 YAML 默认值）。"""
     adx_period: int = Field(default=14, ge=2)
     adx_trend_threshold: float = Field(default=25.0, gt=0, le=100)
+    adx_fuse_threshold: float = Field(default=30.0, gt=0, le=100)
     atr_short_period: int = Field(default=7, ge=2)
     atr_long_period: int = Field(default=28, ge=2)
     atr_ratio_threshold: float = Field(default=1.5, gt=0)
@@ -63,6 +137,8 @@ class RegimeParams(BaseModel):
     bb_width_threshold: float = Field(default=0.1, gt=0)
     hurst_period: int = Field(default=100, ge=20)
     hurst_threshold: float = Field(default=0.5, gt=0, lt=1)
+    hurst_fuse_threshold: float = Field(default=0.6, gt=0, lt=1)
+    hurst_extreme_low: float = Field(default=0.35, gt=0, lt=1)
     trend_vote_threshold: int = Field(default=2, ge=1, le=4)
 
 
@@ -104,6 +180,9 @@ class IndicatorSnapshot(BaseModel):
     trend_votes: int
     total_votes: int
     regime: str
+    position_ratio: float
+    accumulate_spot: bool
+    fuse_triggered: bool
 
 
 class RegimeResponse(BaseModel):
@@ -203,20 +282,24 @@ def compute_regime(req: RegimeRequest):
     # 1. 构建 RegimeFilterConfig（Pydantic 自动校验）
     try:
         rf_config = RegimeFilterConfig(**req.params.model_dump())
-    except ValidationError as e:
+    except Exception as e:
+        logger.error("参数校验失败: %s", e)
+        # 如果是 Pydantic 校验错误，返回详细信息
+        if hasattr(e, 'errors'):
+             raise HTTPException(status_code=422, detail=e.errors())
         raise HTTPException(status_code=422, detail=str(e))
 
-    # 2. 拉取 K 线
+    # 2. 拉取 K 线（使用 DataManager 进行增量/缓存处理）
     try:
-        exchange = _get_exchange(req.mode)
-        df = exchange.fetch_ohlcv(
+        df = data_manager.get_ohlcv(
+            mode=req.mode,
             symbol=req.symbol,
             timeframe=req.timeframe,
             since_days=req.since_days,
         )
     except Exception as e:
-        logger.error("K 线数据拉取失败: %s", e)
-        raise HTTPException(status_code=503, detail=f"数据拉取失败: {e}")
+        logger.error("K 线数据获取失败: %s", e)
+        raise HTTPException(status_code=503, detail=f"数据获取失败: {e}")
 
     if len(df) < rf_config.hurst_period:
         raise HTTPException(
@@ -280,6 +363,9 @@ def compute_regime(req: RegimeRequest):
         trend_votes=latest_result.trend_votes,
         total_votes=latest_result.total_votes,
         regime=latest_result.regime.value,
+        position_ratio=round(latest_result.position_ratio, 2),
+        accumulate_spot=latest_result.accumulate_spot,
+        fuse_triggered=latest_result.fuse_triggered,
     )
 
     return RegimeResponse(

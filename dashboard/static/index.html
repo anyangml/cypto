@@ -1,765 +1,1323 @@
 <!DOCTYPE html>
 <html lang="zh-CN">
+
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Grid Strategy Dashboard</title>
   <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
-  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link
+    href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;600&family=Inter:wght@300;400;500;600&display=swap"
+    rel="stylesheet" />
   <style>
     /* ── Reset & Base ─────────────────────────────────────────────── */
-    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    *,
+    *::before,
+    *::after {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
 
     :root {
-      --bg-base:    #0a0e1a;
-      --bg-panel:   #0f1629;
-      --bg-card:    #141d35;
-      --bg-input:   #1a2540;
-      --border:     #1e2d4d;
-      --border-hi:  #2a3f6f;
-      --accent:     #00d4ff;
+      --bg-base: #0a0e1a;
+      --bg-panel: #0f1629;
+      --bg-card: #141d35;
+      --bg-input: #1a2540;
+      --border: #1e2d4d;
+      --border-hi: #2a3f6f;
+      --accent: #00d4ff;
       --accent-dim: #0099bb;
-      --green:      #00e676;
-      --green-dim:  rgba(0,230,118,0.12);
-      --red:        #ff4d6d;
-      --red-dim:    rgba(255,77,109,0.12);
-      --yellow:     #ffd740;
-      --text-1:     #e8f0fe;
-      --text-2:     #8899bb;
-      --text-3:     #4a5a7a;
-      --font-mono:  'JetBrains Mono', monospace;
-      --font-sans:  'Inter', sans-serif;
-      --radius:     8px;
+      --green: #00e676;
+      --green-dim: rgba(0, 230, 118, 0.12);
+      --red: #ff4d6d;
+      --red-dim: rgba(255, 77, 109, 0.12);
+      --yellow: #ffd740;
+      --text-1: #e8f0fe;
+      --text-2: #8899bb;
+      --text-3: #4a5a7a;
+      --font-mono: 'JetBrains Mono', monospace;
+      --font-sans: 'Inter', sans-serif;
+      --radius: 8px;
       --transition: 0.18s ease;
     }
 
-    html, body { height: 100%; background: var(--bg-base); color: var(--text-1); font-family: var(--font-sans); font-size: 13px; overflow: hidden; }
+    html,
+    body {
+      height: 100%;
+      background: var(--bg-base);
+      color: var(--text-1);
+      font-family: var(--font-sans);
+      font-size: 13px;
+      overflow: hidden;
+    }
 
     /* ── Layout ───────────────────────────────────────────────────── */
-    .app { display: grid; grid-template-rows: 52px 1fr; grid-template-columns: 1fr 300px; height: 100vh; gap: 0; }
+    .app {
+      display: grid;
+      grid-template-rows: 52px 1fr;
+      grid-template-columns: 1fr 300px;
+      height: 100vh;
+      gap: 0;
+    }
 
     /* ── Header ───────────────────────────────────────────────────── */
     header {
       grid-column: 1 / -1;
-      display: flex; align-items: center; gap: 20px;
+      display: flex;
+      align-items: center;
+      gap: 20px;
       padding: 0 20px;
       background: var(--bg-panel);
       border-bottom: 1px solid var(--border);
       position: relative;
     }
-    .logo {
-      display: flex; align-items: center; gap: 8px;
-      font-family: var(--font-mono); font-size: 14px; font-weight: 600;
-      color: var(--accent); letter-spacing: 0.05em;
-    }
-    .logo-icon { width: 22px; height: 22px; }
-    .logo svg { width: 100%; height: 100%; }
 
-    .header-controls { display: flex; align-items: center; gap: 10px; flex: 1; }
+    .logo {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-family: var(--font-mono);
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--accent);
+      letter-spacing: 0.05em;
+    }
+
+    .logo-icon {
+      width: 22px;
+      height: 22px;
+    }
+
+    .logo svg {
+      width: 100%;
+      height: 100%;
+    }
+
+    .header-controls {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex: 1;
+    }
 
     /* Mode toggle */
     .mode-toggle {
-      display: flex; background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden;
+      display: flex;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
     }
+
     .mode-btn {
-      padding: 5px 14px; cursor: pointer; font-size: 12px; font-weight: 500;
-      border: none; background: transparent; color: var(--text-2);
-      transition: var(--transition); font-family: var(--font-sans);
+      padding: 5px 14px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 500;
+      border: none;
+      background: transparent;
+      color: var(--text-2);
+      transition: var(--transition);
+      font-family: var(--font-sans);
     }
-    .mode-btn.active { background: var(--accent); color: #000; font-weight: 600; }
-    .mode-btn:hover:not(.active) { color: var(--text-1); background: var(--border); }
+
+    .mode-btn.active {
+      background: var(--accent);
+      color: #000;
+      font-weight: 600;
+    }
+
+    .mode-btn:hover:not(.active) {
+      color: var(--text-1);
+      background: var(--border);
+    }
 
     /* Select / Input */
-    select, .hdr-input {
-      background: var(--bg-input); border: 1px solid var(--border); border-radius: var(--radius);
-      color: var(--text-1); padding: 5px 10px; font-size: 12px; font-family: var(--font-sans);
-      outline: none; cursor: pointer; transition: border-color var(--transition);
+    select,
+    .hdr-input {
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      color: var(--text-1);
+      padding: 5px 10px;
+      font-size: 12px;
+      font-family: var(--font-sans);
+      outline: none;
+      cursor: pointer;
+      transition: border-color var(--transition);
     }
-    select:hover, .hdr-input:hover { border-color: var(--border-hi); }
-    select:focus, .hdr-input:focus { border-color: var(--accent); }
 
-    .hdr-label { color: var(--text-2); font-size: 11px; white-space: nowrap; }
+    select:hover,
+    .hdr-input:hover {
+      border-color: var(--border-hi);
+    }
+
+    select:focus,
+    .hdr-input:focus {
+      border-color: var(--accent);
+    }
+
+    .hdr-label {
+      color: var(--text-2);
+      font-size: 11px;
+      white-space: nowrap;
+    }
 
     /* Run button */
     #btn-run {
       margin-left: auto;
-      padding: 6px 20px; border: none; border-radius: var(--radius);
+      padding: 6px 16px;
+      border: none;
+      border-radius: var(--radius);
       background: linear-gradient(135deg, var(--accent), #0077ff);
-      color: #000; font-weight: 600; font-size: 12px; cursor: pointer;
+      color: #000;
+      font-weight: 600;
+      font-size: 12px;
+      cursor: pointer;
       transition: opacity var(--transition), transform var(--transition);
-      font-family: var(--font-sans); letter-spacing: 0.03em;
+      font-family: var(--font-sans);
+      letter-spacing: 0.03em;
     }
-    #btn-run:hover { opacity: 0.85; transform: translateY(-1px); }
-    #btn-run:active { transform: translateY(0); }
-    #btn-run:disabled { opacity: 0.4; cursor: not-allowed; transform: none; }
+
+    #btn-run:hover {
+      opacity: 0.85;
+      transform: translateY(-1px);
+    }
+
+    #btn-run:active {
+      transform: translateY(0);
+    }
+
+    #btn-run:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+      transform: none;
+    }
+
+    /* Auto switch */
+    .auto-toggle {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 4px 10px;
+      border-radius: var(--radius);
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      cursor: pointer;
+      transition: var(--transition);
+    }
+
+    .auto-toggle:hover {
+      border-color: var(--border-hi);
+    }
+
+    .auto-toggle input {
+      cursor: pointer;
+      accent-color: var(--accent);
+    }
+
+    .auto-label {
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-2);
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
+    .auto-toggle.active .auto-label {
+      color: var(--accent);
+    }
 
     /* Status badge */
     .status-badge {
-      display: flex; align-items: center; gap: 6px;
-      font-size: 11px; color: var(--text-2); font-family: var(--font-mono);
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--text-2);
+      font-family: var(--font-mono);
     }
+
     .status-dot {
-      width: 7px; height: 7px; border-radius: 50%;
-      background: var(--text-3); transition: background var(--transition);
+      width: 7px;
+      height: 7px;
+      border-radius: 50%;
+      background: var(--text-3);
+      transition: background var(--transition);
     }
-    .status-dot.loading { background: var(--yellow); animation: pulse 1s infinite; }
-    .status-dot.ok      { background: var(--green); }
-    .status-dot.error   { background: var(--red); }
-    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.3} }
+
+    .status-dot.loading {
+      background: var(--yellow);
+      animation: pulse 1s infinite;
+    }
+
+    .status-dot.ok {
+      background: var(--green);
+    }
+
+    .status-dot.error {
+      background: var(--red);
+    }
+
+    @keyframes pulse {
+
+      0%,
+      100% {
+        opacity: 1
+      }
+
+      50% {
+        opacity: 0.3
+      }
+    }
 
     /* ── Main chart area ──────────────────────────────────────────── */
     .chart-area {
-      grid-row: 2; grid-column: 1;
-      display: flex; flex-direction: column;
-      background: var(--bg-base); overflow: hidden;
+      grid-row: 2;
+      grid-column: 1;
+      display: flex;
+      flex-direction: column;
+      background: var(--bg-base);
+      overflow: hidden;
     }
 
     .chart-header {
-      display: flex; align-items: center; gap: 12px;
+      display: flex;
+      align-items: center;
+      gap: 12px;
       padding: 10px 16px 6px;
       border-bottom: 1px solid var(--border);
     }
-    .chart-title { font-size: 13px; font-weight: 600; color: var(--text-1); font-family: var(--font-mono); }
-    .chart-subtitle { font-size: 11px; color: var(--text-2); }
 
-    .regime-legend { display: flex; gap: 12px; margin-left: auto; }
-    .legend-item { display: flex; align-items: center; gap: 5px; font-size: 11px; color: var(--text-2); }
-    .legend-dot { width: 10px; height: 10px; border-radius: 2px; }
-    .legend-dot.range { background: var(--green); opacity: 0.7; }
-    .legend-dot.trend { background: var(--red); opacity: 0.7; }
+    .chart-title {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--text-1);
+      font-family: var(--font-mono);
+    }
 
-    #chart-container { flex: 1; position: relative; }
+    .chart-subtitle {
+      font-size: 11px;
+      color: var(--text-2);
+    }
+
+    .regime-legend {
+      display: flex;
+      gap: 12px;
+      margin-left: auto;
+    }
+
+    .legend-item {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      font-size: 11px;
+      color: var(--text-2);
+    }
+
+    .legend-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 2px;
+    }
+
+    .legend-dot.range {
+      background: var(--green);
+      opacity: 0.7;
+    }
+
+    .legend-dot.trend {
+      background: var(--red);
+      opacity: 0.7;
+    }
+
+    #chart-container {
+      flex: 1;
+      position: relative;
+    }
 
     /* Empty state */
     .empty-state {
-      position: absolute; inset: 0;
-      display: flex; flex-direction: column; align-items: center; justify-content: center;
-      gap: 12px; color: var(--text-3);
+      position: absolute;
+      inset: 0;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 12px;
+      color: var(--text-3);
     }
-    .empty-state svg { opacity: 0.3; }
-    .empty-state p { font-size: 13px; }
+
+    .empty-state svg {
+      opacity: 0.3;
+    }
+
+    .empty-state p {
+      font-size: 13px;
+    }
 
     /* ── Right sidebar ────────────────────────────────────────────── */
     .sidebar {
-      grid-row: 2; grid-column: 2;
+      grid-row: 2;
+      grid-column: 2;
       background: var(--bg-panel);
       border-left: 1px solid var(--border);
-      display: flex; flex-direction: column;
+      display: flex;
+      flex-direction: column;
       overflow: hidden;
     }
 
     .sidebar-tabs {
-      display: flex; border-bottom: 1px solid var(--border);
+      display: flex;
+      border-bottom: 1px solid var(--border);
     }
+
     .tab-btn {
-      flex: 1; padding: 10px 0; text-align: center;
-      font-size: 11px; font-weight: 500; cursor: pointer;
-      border: none; background: transparent; color: var(--text-2);
-      border-bottom: 2px solid transparent; transition: var(--transition);
+      flex: 1;
+      padding: 10px 0;
+      text-align: center;
+      font-size: 11px;
+      font-weight: 500;
+      cursor: pointer;
+      border: none;
+      background: transparent;
+      color: var(--text-2);
+      border-bottom: 2px solid transparent;
+      transition: var(--transition);
       font-family: var(--font-sans);
     }
-    .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); }
-    .tab-btn:hover:not(.active) { color: var(--text-1); }
 
-    .tab-pane { display: none; flex: 1; overflow-y: auto; padding: 12px; }
-    .tab-pane.active { display: flex; flex-direction: column; gap: 10px; }
+    .tab-btn.active {
+      color: var(--accent);
+      border-bottom-color: var(--accent);
+    }
+
+    .tab-btn:hover:not(.active) {
+      color: var(--text-1);
+    }
+
+    .tab-pane {
+      display: none;
+      flex: 1;
+      overflow-y: auto;
+      padding: 12px;
+    }
+
+    .tab-pane.active {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
 
     /* Scrollbar */
-    .tab-pane::-webkit-scrollbar { width: 4px; }
-    .tab-pane::-webkit-scrollbar-track { background: transparent; }
-    .tab-pane::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 2px; }
+    .tab-pane::-webkit-scrollbar {
+      width: 4px;
+    }
+
+    .tab-pane::-webkit-scrollbar-track {
+      background: transparent;
+    }
+
+    .tab-pane::-webkit-scrollbar-thumb {
+      background: var(--border-hi);
+      border-radius: 2px;
+    }
 
     /* ── Metrics cards ────────────────────────────────────────────── */
     .regime-banner {
-      padding: 12px 14px; border-radius: var(--radius);
-      display: flex; align-items: center; justify-content: space-between;
-      background: var(--bg-card); border: 1px solid var(--border);
+      padding: 12px 14px;
+      border-radius: var(--radius);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
       transition: var(--transition);
     }
-    .regime-banner.range { border-color: var(--green); background: var(--green-dim); }
-    .regime-banner.trend { border-color: var(--red);   background: var(--red-dim); }
-    .regime-label { font-size: 18px; font-weight: 600; font-family: var(--font-mono); letter-spacing: 0.1em; }
-    .regime-label.range { color: var(--green); }
-    .regime-label.trend { color: var(--red); }
-    .regime-votes { font-size: 11px; color: var(--text-2); text-align: right; }
-    .regime-votes strong { display: block; font-size: 20px; font-family: var(--font-mono); color: var(--text-1); }
 
-    .metrics-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+    .regime-banner.range {
+      border-color: var(--green);
+      background: var(--green-dim);
+    }
+
+    .regime-banner.trend {
+      border-color: var(--red);
+      background: var(--red-dim);
+    }
+
+    .regime-banner.fuse {
+      border-color: var(--yellow);
+      background: rgba(255, 215, 64, 0.15);
+    }
+
+    .regime-label {
+      font-size: 18px;
+      font-weight: 600;
+      font-family: var(--font-mono);
+      letter-spacing: 0.1em;
+    }
+
+    .regime-label.range {
+      color: var(--green);
+    }
+
+    .regime-label.trend {
+      color: var(--red);
+    }
+
+    .regime-label.fuse {
+      color: var(--yellow);
+    }
+
+    .regime-votes {
+      font-size: 11px;
+      color: var(--text-2);
+      text-align: right;
+    }
+
+    .regime-votes strong {
+      display: block;
+      font-size: 20px;
+      font-family: var(--font-mono);
+      color: var(--text-1);
+    }
+
+    .metrics-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 8px;
+    }
+
     .metric-card {
-      background: var(--bg-card); border: 1px solid var(--border);
-      border-radius: var(--radius); padding: 10px 12px;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 10px 12px;
       transition: border-color var(--transition);
     }
-    .metric-card.vote-trend { border-color: var(--red); }
-    .metric-card.vote-range { border-color: var(--green); }
-    .metric-name { font-size: 10px; color: var(--text-2); text-transform: uppercase; letter-spacing: 0.08em; margin-bottom: 4px; }
-    .metric-value { font-size: 16px; font-weight: 600; font-family: var(--font-mono); color: var(--text-1); }
+
+    .metric-card.vote-trend {
+      border-color: var(--red);
+    }
+
+    .metric-card.vote-range {
+      border-color: var(--green);
+    }
+
+    .metric-name {
+      font-size: 10px;
+      color: var(--text-2);
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      margin-bottom: 4px;
+    }
+
+    .metric-value {
+      font-size: 16px;
+      font-weight: 600;
+      font-family: var(--font-mono);
+      color: var(--text-1);
+    }
+
     .metric-vote {
-      display: inline-block; margin-top: 4px;
-      font-size: 9px; font-weight: 600; padding: 2px 6px; border-radius: 3px;
+      display: inline-block;
+      margin-top: 4px;
+      font-size: 9px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 3px;
       letter-spacing: 0.06em;
     }
-    .metric-vote.trend { background: var(--red-dim); color: var(--red); }
-    .metric-vote.range { background: var(--green-dim); color: var(--green); }
+
+    .metric-vote.trend {
+      background: var(--red-dim);
+      color: var(--red);
+    }
+
+    .metric-vote.range {
+      background: var(--green-dim);
+      color: var(--green);
+    }
+
+    .pos-ratio-badge {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      background: var(--bg-card);
+      border: 1px solid var(--border);
+      padding: 8px 12px;
+      border-radius: var(--radius);
+      margin-top: 4px;
+    }
+
+    .pos-ratio-value {
+      font-size: 18px;
+      font-weight: 600;
+      font-family: var(--font-mono);
+      color: var(--accent);
+    }
+
+    .spot-accum-badge {
+      font-size: 9px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 3px;
+      background: var(--bg-input);
+      color: var(--text-3);
+      border: 1px solid var(--border);
+      transition: var(--transition);
+    }
+
+    .spot-accum-badge.active {
+      background: var(--yellow);
+      color: #000;
+      border-color: var(--yellow);
+      box-shadow: 0 0 10px rgba(255, 215, 64, 0.2);
+    }
 
     /* ── Parameter panel ──────────────────────────────────────────── */
-    .param-section { margin-bottom: 4px; }
+    .param-section {
+      margin-bottom: 4px;
+    }
+
     .param-section-title {
-      font-size: 10px; font-weight: 600; color: var(--accent);
-      text-transform: uppercase; letter-spacing: 0.1em;
-      padding: 6px 0 8px; border-bottom: 1px solid var(--border); margin-bottom: 8px;
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      padding: 6px 0 8px;
+      border-bottom: 1px solid var(--border);
+      margin-bottom: 8px;
     }
-    .param-row { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; gap: 8px; }
-    .param-label { font-size: 11px; color: var(--text-2); flex: 1; white-space: nowrap; }
+
+    .param-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      gap: 8px;
+    }
+
+    .param-label {
+      font-size: 11px;
+      color: var(--text-2);
+      flex: 1;
+      white-space: nowrap;
+    }
+
     .param-input {
-      width: 72px; background: var(--bg-input); border: 1px solid var(--border);
-      border-radius: 5px; color: var(--text-1); padding: 4px 8px;
-      font-size: 12px; font-family: var(--font-mono); text-align: right;
-      outline: none; transition: border-color var(--transition);
+      width: 72px;
+      background: var(--bg-input);
+      border: 1px solid var(--border);
+      border-radius: 5px;
+      color: var(--text-1);
+      padding: 4px 8px;
+      font-size: 12px;
+      font-family: var(--font-mono);
+      text-align: right;
+      outline: none;
+      transition: border-color var(--transition);
     }
-    .param-input:focus { border-color: var(--accent); }
-    .param-input:invalid { border-color: var(--red); }
+
+    .param-input:focus {
+      border-color: var(--accent);
+    }
+
+    .param-input:invalid {
+      border-color: var(--red);
+    }
 
     .btn-reset {
-      width: 100%; padding: 8px; border: 1px solid var(--border-hi);
-      border-radius: var(--radius); background: transparent; color: var(--text-2);
-      font-size: 12px; cursor: pointer; transition: var(--transition); font-family: var(--font-sans);
+      width: 100%;
+      padding: 8px;
+      border: 1px solid var(--border-hi);
+      border-radius: var(--radius);
+      background: transparent;
+      color: var(--text-2);
+      font-size: 12px;
+      cursor: pointer;
+      transition: var(--transition);
+      font-family: var(--font-sans);
     }
-    .btn-reset:hover { background: var(--bg-input); color: var(--text-1); }
+
+    .btn-reset:hover {
+      background: var(--bg-input);
+      color: var(--text-1);
+    }
 
     /* ── Error toast ──────────────────────────────────────────────── */
     #toast {
-      position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%) translateY(80px);
-      background: #1a0a0f; border: 1px solid var(--red); color: var(--red);
-      padding: 10px 20px; border-radius: var(--radius); font-size: 12px;
-      transition: transform 0.3s ease; z-index: 999; max-width: 500px; text-align: center;
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%) translateY(80px);
+      background: #1a0a0f;
+      border: 1px solid var(--red);
+      color: var(--red);
+      padding: 10px 20px;
+      border-radius: var(--radius);
+      font-size: 12px;
+      transition: transform 0.3s ease;
+      z-index: 999;
+      max-width: 500px;
+      text-align: center;
     }
-    #toast.show { transform: translateX(-50%) translateY(0); }
+
+    #toast.show {
+      transform: translateX(-50%) translateY(0);
+    }
 
     /* ── Loading overlay ──────────────────────────────────────────── */
     #loading-overlay {
-      position: absolute; inset: 0; background: rgba(10,14,26,0.7);
-      display: none; align-items: center; justify-content: center;
-      z-index: 10; backdrop-filter: blur(2px);
+      position: absolute;
+      inset: 0;
+      background: rgba(10, 14, 26, 0.7);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 10;
+      backdrop-filter: blur(2px);
     }
-    #loading-overlay.show { display: flex; }
+
+    #loading-overlay.show {
+      display: flex;
+    }
+
     .spinner {
-      width: 36px; height: 36px; border: 3px solid var(--border);
-      border-top-color: var(--accent); border-radius: 50%;
+      width: 36px;
+      height: 36px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
       animation: spin 0.8s linear infinite;
     }
-    @keyframes spin { to { transform: rotate(360deg); } }
 
-    /* ── Scrollbar global ─────────────────────────────────────────── */
-    select option { background: var(--bg-card); }
-  </style>
-</head>
-<body>
-<div class="app">
-
-  <!-- ── Header ─────────────────────────────────────────────────── -->
-  <header>
-    <div class="logo">
-      <div class="logo-icon">
-        <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
-          <path d="M3 17L9 11L13 15L21 7" stroke="#00d4ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          <path d="M17 7H21V11" stroke="#00d4ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-          <rect x="3" y="19" width="18" height="2" rx="1" fill="#00d4ff" opacity="0.3"/>
-        </svg>
-      </div>
-      GRID·STRATEGY
-    </div>
-
-    <div class="header-controls">
-      <div class="mode-toggle">
-        <button class="mode-btn active" id="btn-backtest" onclick="setMode('backtest')">BACKTEST</button>
-        <button class="mode-btn" id="btn-live" onclick="setMode('live')">LIVE</button>
-      </div>
-
-      <span class="hdr-label">Symbol</span>
-      <select id="sel-symbol">
-        <option value="BTC/USDT">BTC/USDT</option>
-        <option value="ETH/USDT">ETH/USDT</option>
-        <option value="SOL/USDT">SOL/USDT</option>
-      </select>
-
-      <span class="hdr-label">Timeframe</span>
-      <select id="sel-timeframe">
-        <option value="15m">15m</option>
-        <option value="1h" selected>1h</option>
-        <option value="4h">4h</option>
-        <option value="1d">1d</option>
-      </select>
-
-      <span class="hdr-label">History</span>
-      <input class="hdr-input" id="inp-days" type="number" value="90" min="7" max="365" style="width:60px" />
-      <span class="hdr-label">days</span>
-
-      <div class="status-badge">
-        <div class="status-dot" id="status-dot"></div>
-        <span id="status-text">Ready</span>
-      </div>
-
-      <button id="btn-run" onclick="runAnalysis()">▶ RUN</button>
-    </div>
-  </header>
-
-  <!-- ── Chart area ─────────────────────────────────────────────── -->
-  <main class="chart-area">
-    <div class="chart-header">
-      <span class="chart-title" id="chart-title">BTC/USDT · 1h</span>
-      <span class="chart-subtitle" id="chart-subtitle">— candles loaded</span>
-      <div class="regime-legend">
-        <div class="legend-item"><div class="legend-dot range"></div>RANGE</div>
-        <div class="legend-item"><div class="legend-dot trend"></div>TREND</div>
-      </div>
-    </div>
-    <div id="chart-container">
-      <div class="empty-state" id="empty-state">
-        <svg width="48" height="48" viewBox="0 0 24 24" fill="none">
-          <rect x="3" y="3" width="4" height="14" rx="1" fill="#4a5a7a"/>
-          <rect x="10" y="7" width="4" height="10" rx="1" fill="#4a5a7a"/>
-          <rect x="17" y="5" width="4" height="12" rx="1" fill="#4a5a7a"/>
-        </svg>
-        <p>Select parameters and click RUN to load chart</p>
-      </div>
-      <div id="loading-overlay"><div class="spinner"></div></div>
-    </div>
-  </main>
-
-  <!-- ── Sidebar ─────────────────────────────────────────────────── -->
-  <aside class="sidebar">
-    <div class="sidebar-tabs">
-      <button class="tab-btn active" onclick="switchTab('metrics')">METRICS</button>
-      <button class="tab-btn" onclick="switchTab('params')">PARAMS</button>
-    </div>
-
-    <!-- Metrics tab -->
-    <div class="tab-pane active" id="tab-metrics">
-      <div class="regime-banner" id="regime-banner">
-        <div>
-          <div style="font-size:10px;color:var(--text-2);margin-bottom:4px;letter-spacing:.08em">CURRENT REGIME</div>
-          <div class="regime-label" id="regime-label">—</div>
-        </div>
-        <div class="regime-votes">
-          <strong id="regime-votes">—</strong>
-          votes for TREND
-        </div>
-      </div>
-
-      <div class="metrics-grid">
-        <div class="metric-card" id="card-adx">
-          <div class="metric-name">ADX</div>
-          <div class="metric-value" id="val-adx">—</div>
-          <span class="metric-vote" id="vote-adx">—</span>
-        </div>
-        <div class="metric-card" id="card-atr">
-          <div class="metric-name">ATR Ratio</div>
-          <div class="metric-value" id="val-atr">—</div>
-          <span class="metric-vote" id="vote-atr">—</span>
-        </div>
-        <div class="metric-card" id="card-bb">
-          <div class="metric-name">BB Width</div>
-          <div class="metric-value" id="val-bb">—</div>
-          <span class="metric-vote" id="vote-bb">—</span>
-        </div>
-        <div class="metric-card" id="card-hurst">
-          <div class="metric-name">Hurst</div>
-          <div class="metric-value" id="val-hurst">—</div>
-          <span class="metric-vote" id="vote-hurst">—</span>
-        </div>
-      </div>
-
-      <div style="padding:10px 0; border-top:1px solid var(--border); margin-top:4px;">
-        <div style="font-size:10px;color:var(--text-2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.08em">Regime Timeline</div>
-        <div id="timeline-bars" style="display:flex;height:18px;border-radius:4px;overflow:hidden;gap:1px;"></div>
-        <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:10px;color:var(--text-3);">
-          <span id="tl-start">—</span><span id="tl-end">—</span>
-        </div>
-      </div>
-    </div>
-
-    <!-- Params tab -->
-    <div class="tab-pane" id="tab-params">
-      <div class="param-section">
-        <div class="param-section-title">ADX</div>
-        <div class="param-row">
-          <span class="param-label">Period</span>
-          <input class="param-input" id="p-adx-period" type="number" value="14" min="2" max="50" />
-        </div>
-        <div class="param-row">
-          <span class="param-label">Trend Threshold</span>
-          <input class="param-input" id="p-adx-threshold" type="number" value="25" min="1" max="100" step="0.5" />
-        </div>
-      </div>
-
-      <div class="param-section">
-        <div class="param-section-title">ATR Ratio</div>
-        <div class="param-row">
-          <span class="param-label">Short Period</span>
-          <input class="param-input" id="p-atr-short" type="number" value="7" min="2" max="50" />
-        </div>
-        <div class="param-row">
-          <span class="param-label">Long Period</span>
-          <input class="param-input" id="p-atr-long" type="number" value="28" min="2" max="200" />
-        </div>
-        <div class="param-row">
-          <span class="param-label">Ratio Threshold</span>
-          <input class="param-input" id="p-atr-ratio" type="number" value="1.5" min="0.1" max="5" step="0.1" />
-        </div>
-      </div>
-
-      <div class="param-section">
-        <div class="param-section-title">Bollinger Bands</div>
-        <div class="param-row">
-          <span class="param-label">Period</span>
-          <input class="param-input" id="p-bb-period" type="number" value="20" min="2" max="100" />
-        </div>
-        <div class="param-row">
-          <span class="param-label">Std Dev</span>
-          <input class="param-input" id="p-bb-std" type="number" value="2.0" min="0.5" max="5" step="0.1" />
-        </div>
-        <div class="param-row">
-          <span class="param-label">Width Threshold</span>
-          <input class="param-input" id="p-bb-width" type="number" value="0.1" min="0.01" max="1" step="0.01" />
-        </div>
-      </div>
-
-      <div class="param-section">
-        <div class="param-section-title">Hurst Exponent</div>
-        <div class="param-row">
-          <span class="param-label">Period</span>
-          <input class="param-input" id="p-hurst-period" type="number" value="100" min="20" max="500" />
-        </div>
-        <div class="param-row">
-          <span class="param-label">Threshold</span>
-          <input class="param-input" id="p-hurst-threshold" type="number" value="0.5" min="0.1" max="0.9" step="0.05" />
-        </div>
-      </div>
-
-      <div class="param-section">
-        <div class="param-section-title">Voting</div>
-        <div class="param-row">
-          <span class="param-label">Trend Vote Threshold</span>
-          <input class="param-input" id="p-vote-threshold" type="number" value="2" min="1" max="4" />
-        </div>
-      </div>
-
-      <button class="btn-reset" onclick="resetParams()">↺ Reset to Defaults</button>
-    </div>
-  </aside>
-
-</div>
-
-<!-- Toast -->
-<div id="toast"></div>
-
-<script>
-// ── State ─────────────────────────────────────────────────────────
-let currentMode = 'backtest';
-let chart = null;
-let candleSeries = null;
-let seriesMarkers = [];
-
-const DEFAULTS = {
-  adx_period: 14, adx_trend_threshold: 25.0,
-  atr_short_period: 7, atr_long_period: 28, atr_ratio_threshold: 1.5,
-  bb_period: 20, bb_std: 2.0, bb_width_threshold: 0.1,
-  hurst_period: 100, hurst_threshold: 0.5,
-  trend_vote_threshold: 2,
-};
-
-// ── Chart init ────────────────────────────────────────────────────
-function initChart() {
-  const container = document.getElementById('chart-container');
-  chart = LightweightCharts.createChart(container, {
-    layout: {
-      background: { color: '#0a0e1a' },
-      textColor: '#8899bb',
-      fontFamily: "'JetBrains Mono', monospace",
-    },
-    grid: {
-      vertLines: { color: '#0f1629' },
-      horzLines: { color: '#0f1629' },
-    },
-    crosshair: {
-      mode: LightweightCharts.CrosshairMode.Normal,
-      vertLine: { color: '#2a3f6f', labelBackgroundColor: '#141d35' },
-      horzLine: { color: '#2a3f6f', labelBackgroundColor: '#141d35' },
-    },
-    rightPriceScale: {
-      borderColor: '#1e2d4d',
-    },
-    timeScale: {
-      borderColor: '#1e2d4d',
-      timeVisible: true,
-      secondsVisible: false,
-    },
-    handleScroll: true,
-    handleScale: true,
-  });
-
-  candleSeries = chart.addCandlestickSeries({
-    upColor:   '#00e676',
-    downColor: '#ff4d6d',
-    borderUpColor:   '#00e676',
-    borderDownColor: '#ff4d6d',
-    wickUpColor:   '#00e676',
-    wickDownColor: '#ff4d6d',
-  });
-
-  // Resize observer
-  new ResizeObserver(() => {
-    chart.applyOptions({
-      width: container.clientWidth,
-      height: container.clientHeight,
-    });
-  }).observe(container);
-}
-
-// ── Mode toggle ───────────────────────────────────────────────────
-function setMode(mode) {
-  currentMode = mode;
-  document.getElementById('btn-backtest').classList.toggle('active', mode === 'backtest');
-  document.getElementById('btn-live').classList.toggle('active', mode === 'live');
-}
-
-// ── Tab switch ────────────────────────────────────────────────────
-function switchTab(tab) {
-  document.querySelectorAll('.tab-btn').forEach((b, i) => {
-    b.classList.toggle('active', ['metrics','params'][i] === tab);
-  });
-  document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
-  document.getElementById('tab-' + tab).classList.add('active');
-}
-
-// ── Collect params ────────────────────────────────────────────────
-function getParams() {
-  return {
-    adx_period:           parseInt(document.getElementById('p-adx-period').value),
-    adx_trend_threshold:  parseFloat(document.getElementById('p-adx-threshold').value),
-    atr_short_period:     parseInt(document.getElementById('p-atr-short').value),
-    atr_long_period:      parseInt(document.getElementById('p-atr-long').value),
-    atr_ratio_threshold:  parseFloat(document.getElementById('p-atr-ratio').value),
-    bb_period:            parseInt(document.getElementById('p-bb-period').value),
-    bb_std:               parseFloat(document.getElementById('p-bb-std').value),
-    bb_width_threshold:   parseFloat(document.getElementById('p-bb-width').value),
-    hurst_period:         parseInt(document.getElementById('p-hurst-period').value),
-    hurst_threshold:      parseFloat(document.getElementById('p-hurst-threshold').value),
-    trend_vote_threshold: parseInt(document.getElementById('p-vote-threshold').value),
-  };
-}
-
-function resetParams() {
-  document.getElementById('p-adx-period').value      = DEFAULTS.adx_period;
-  document.getElementById('p-adx-threshold').value   = DEFAULTS.adx_trend_threshold;
-  document.getElementById('p-atr-short').value       = DEFAULTS.atr_short_period;
-  document.getElementById('p-atr-long').value        = DEFAULTS.atr_long_period;
-  document.getElementById('p-atr-ratio').value       = DEFAULTS.atr_ratio_threshold;
-  document.getElementById('p-bb-period').value       = DEFAULTS.bb_period;
-  document.getElementById('p-bb-std').value          = DEFAULTS.bb_std;
-  document.getElementById('p-bb-width').value        = DEFAULTS.bb_width_threshold;
-  document.getElementById('p-hurst-period').value    = DEFAULTS.hurst_period;
-  document.getElementById('p-hurst-threshold').value = DEFAULTS.hurst_threshold;
-  document.getElementById('p-vote-threshold').value  = DEFAULTS.trend_vote_threshold;
-}
-
-// ── Status helpers ────────────────────────────────────────────────
-function setStatus(state, text) {
-  const dot = document.getElementById('status-dot');
-  dot.className = 'status-dot ' + state;
-  document.getElementById('status-text').textContent = text;
-}
-
-function showToast(msg) {
-  const t = document.getElementById('toast');
-  t.textContent = msg;
-  t.classList.add('show');
-  setTimeout(() => t.classList.remove('show'), 4000);
-}
-
-function setLoading(on) {
-  document.getElementById('loading-overlay').classList.toggle('show', on);
-  document.getElementById('btn-run').disabled = on;
-}
-
-// ── Render metrics ────────────────────────────────────────────────
-function renderMetrics(latest) {
-  const isRange = latest.regime === 'RANGE';
-
-  // Banner
-  const banner = document.getElementById('regime-banner');
-  banner.className = 'regime-banner ' + (isRange ? 'range' : 'trend');
-  const lbl = document.getElementById('regime-label');
-  lbl.className = 'regime-label ' + (isRange ? 'range' : 'trend');
-  lbl.textContent = latest.regime;
-  document.getElementById('regime-votes').textContent = `${latest.trend_votes}/${latest.total_votes}`;
-
-  // Individual metrics
-  function setMetric(id, value, vote, label) {
-    document.getElementById('val-' + id).textContent = value;
-    const voteEl = document.getElementById('vote-' + id);
-    voteEl.textContent = vote ? 'TREND' : 'RANGE';
-    voteEl.className = 'metric-vote ' + (vote ? 'trend' : 'range');
-    document.getElementById('card-' + id).className = 'metric-card vote-' + (vote ? 'trend' : 'range');
-  }
-
-  setMetric('adx',   latest.adx_value.toFixed(1),   latest.adx_vote,   'ADX');
-  setMetric('atr',   latest.atr_ratio.toFixed(3),    latest.atr_vote,   'ATR');
-  setMetric('bb',    latest.bb_width.toFixed(4),     latest.bb_vote,    'BB');
-  setMetric('hurst', latest.hurst_value.toFixed(3),  latest.hurst_vote, 'Hurst');
-}
-
-// ── Render regime background bands ───────────────────────────────
-function renderRegimeBands(segments) {
-  if (!chart || !candleSeries) return;
-
-  // Use series markers as lightweight band approximation
-  // For proper bands we use background rectangles via primitives
-  // Lightweight Charts v4 supports series markers; we'll use background color bands
-  // by adding rectangle primitives
-  const primitives = segments.map(seg => ({
-    time: seg.start_time,
-    endTime: seg.end_time,
-    color: seg.regime === 'RANGE'
-      ? 'rgba(0,230,118,0.07)'
-      : 'rgba(255,77,109,0.07)',
-  }));
-
-  // Apply as background series (area series trick)
-  // We'll use ISeriesPrimitive approach via markers for simplicity
-  const markers = segments.map(seg => ({
-    time: seg.start_time,
-    position: 'aboveBar',
-    color: seg.regime === 'RANGE' ? '#00e676' : '#ff4d6d',
-    shape: 'circle',
-    size: 0.3,
-    text: seg.regime === 'RANGE' ? '●' : '▲',
-  }));
-
-  candleSeries.setMarkers(markers);
-}
-
-// ── Render timeline bar ───────────────────────────────────────────
-function renderTimeline(segments) {
-  const container = document.getElementById('timeline-bars');
-  container.innerHTML = '';
-  if (!segments.length) return;
-
-  const total = segments[segments.length-1].end_time - segments[0].start_time;
-  segments.forEach(seg => {
-    const pct = ((seg.end_time - seg.start_time) / total * 100).toFixed(2);
-    const bar = document.createElement('div');
-    bar.style.cssText = `flex:0 0 ${pct}%;height:100%;background:${
-      seg.regime === 'RANGE' ? 'rgba(0,230,118,0.5)' : 'rgba(255,77,109,0.5)'
-    };border-radius:2px;`;
-    bar.title = `${seg.regime}: ${new Date(seg.start_time*1000).toLocaleDateString()} → ${new Date(seg.end_time*1000).toLocaleDateString()}`;
-    container.appendChild(bar);
-  });
-
-  const fmt = ts => new Date(ts*1000).toLocaleDateString('zh-CN', {month:'short',day:'numeric'});
-  document.getElementById('tl-start').textContent = fmt(segments[0].start_time);
-  document.getElementById('tl-end').textContent   = fmt(segments[segments.length-1].end_time);
-}
-
-// ── Main analysis runner ──────────────────────────────────────────
-async function runAnalysis() {
-  const symbol    = document.getElementById('sel-symbol').value;
-  const timeframe = document.getElementById('sel-timeframe').value;
-  const sinceDays = parseInt(document.getElementById('inp-days').value);
-  const params    = getParams();
-
-  setLoading(true);
-  setStatus('loading', 'Fetching data…');
-
-  const payload = {
-    mode: currentMode,
-    symbol,
-    timeframe,
-    since_days: sinceDays,
-    params,
-  };
-
-  try {
-    const res = await fetch('/api/regime', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(payload),
-    });
-
-    if (!res.ok) {
-      const err = await res.json();
-      throw new Error(err.detail || `HTTP ${res.status}`);
+    @keyframes spin {
+      to {
+        transform: rotate(360deg);
+      }
     }
 
-    const data = await res.json();
+    /* ── Scrollbar global ─────────────────────────────────────────── */
+    select option {
+      background: var(--bg-card);
+    }
+  </style>
+</head>
 
-    // Hide empty state
-    document.getElementById('empty-state').style.display = 'none';
+<body>
+  <div class="app">
 
-    // Update chart title
-    document.getElementById('chart-title').textContent =
-      `${data.symbol} · ${data.timeframe} · ${data.mode.toUpperCase()}`;
-    document.getElementById('chart-subtitle').textContent =
-      `${data.candles.length} candles loaded`;
+    <!-- ── Header ─────────────────────────────────────────────────── -->
+    <header>
+      <div class="logo">
+        <div class="logo-icon">
+          <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M3 17L9 11L13 15L21 7" stroke="#00d4ff" stroke-width="2" stroke-linecap="round"
+              stroke-linejoin="round" />
+            <path d="M17 7H21V11" stroke="#00d4ff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" />
+            <rect x="3" y="19" width="18" height="2" rx="1" fill="#00d4ff" opacity="0.3" />
+          </svg>
+        </div>
+        GRID·STRATEGY
+      </div>
 
-    // Feed candles
-    candleSeries.setData(data.candles.map(c => ({
-      time: c.time,
-      open: c.open, high: c.high, low: c.low, close: c.close,
-    })));
+      <div class="header-controls">
+        <div class="mode-toggle">
+          <button class="mode-btn active" id="btn-backtest" onclick="setMode('backtest')">BACKTEST</button>
+          <button class="mode-btn" id="btn-live" onclick="setMode('live')">LIVE</button>
+        </div>
 
-    // Regime bands
-    renderRegimeBands(data.segments);
-    renderTimeline(data.segments);
+        <span class="hdr-label">Symbol</span>
+        <select id="sel-symbol">
+          <option value="BTC/USDT">BTC/USDT</option>
+          <option value="ETH/USDT">ETH/USDT</option>
+          <option value="SOL/USDT">SOL/USDT</option>
+        </select>
 
-    // Metrics
-    renderMetrics(data.latest);
+        <span class="hdr-label">Timeframe</span>
+        <select id="sel-timeframe">
+          <option value="15m">15m</option>
+          <option value="1h" selected>1h</option>
+          <option value="4h">4h</option>
+          <option value="1d">1d</option>
+        </select>
 
-    // Auto-switch to metrics tab
-    switchTab('metrics');
+        <span class="hdr-label">History</span>
+        <input class="hdr-input" id="inp-days" type="number" value="90" min="7" max="365" style="width:60px" />
+        <span class="hdr-label">days</span>
 
-    chart.timeScale().fitContent();
-    setStatus('ok', `Updated ${new Date().toLocaleTimeString()}`);
+        <div class="status-badge">
+          <div class="status-dot" id="status-dot"></div>
+          <span id="status-text">Ready</span>
+        </div>
 
-  } catch (e) {
-    setStatus('error', 'Error');
-    showToast('⚠ ' + e.message);
-    console.error(e);
-  } finally {
-    setLoading(false);
-  }
-}
+        <label class="auto-toggle" id="auto-toggle-ui">
+          <input type="checkbox" id="chk-auto" onchange="toggleAuto()">
+          <span class="auto-label">AUTO</span>
+        </label>
 
-// ── Boot ──────────────────────────────────────────────────────────
-window.addEventListener('DOMContentLoaded', () => {
-  initChart();
+        <button id="btn-run" onclick="runAnalysis()">▶ RUN</button>
+      </div>
+    </header>
 
-  // Load defaults from API
-  fetch('/api/config')
-    .then(r => r.json())
-    .then(cfg => {
-      if (cfg.adx_period) {
-        document.getElementById('p-adx-period').value      = cfg.adx_period;
-        document.getElementById('p-adx-threshold').value   = cfg.adx_trend_threshold;
-        document.getElementById('p-atr-short').value       = cfg.atr_short_period;
-        document.getElementById('p-atr-long').value        = cfg.atr_long_period;
-        document.getElementById('p-atr-ratio').value       = cfg.atr_ratio_threshold;
-        document.getElementById('p-bb-period').value       = cfg.bb_period;
-        document.getElementById('p-bb-std').value          = cfg.bb_std;
-        document.getElementById('p-bb-width').value        = cfg.bb_width_threshold;
-        document.getElementById('p-hurst-period').value    = cfg.hurst_period;
-        document.getElementById('p-hurst-threshold').value = cfg.hurst_threshold;
-        document.getElementById('p-vote-threshold').value  = cfg.trend_vote_threshold;
+    <!-- ── Chart area ─────────────────────────────────────────────── -->
+    <main class="chart-area">
+      <div class="chart-header">
+        <span class="chart-title" id="chart-title">BTC/USDT · 1h</span>
+        <span class="chart-subtitle" id="chart-subtitle">— candles loaded</span>
+        <div class="regime-legend">
+          <div class="legend-item">
+            <div class="legend-dot range"></div>RANGE
+          </div>
+          <div class="legend-item">
+            <div class="legend-dot trend"></div>TREND
+          </div>
+        </div>
+      </div>
+      <div id="chart-container">
+        <div class="empty-state" id="empty-state">
+          <svg width="48" height="48" viewBox="0 0 24 24" fill="none">
+            <rect x="3" y="3" width="4" height="14" rx="1" fill="#4a5a7a" />
+            <rect x="10" y="7" width="4" height="10" rx="1" fill="#4a5a7a" />
+            <rect x="17" y="5" width="4" height="12" rx="1" fill="#4a5a7a" />
+          </svg>
+          <p>Select parameters and click RUN to load chart</p>
+        </div>
+        <div id="loading-overlay">
+          <div class="spinner"></div>
+        </div>
+      </div>
+    </main>
+
+    <!-- ── Sidebar ─────────────────────────────────────────────────── -->
+    <aside class="sidebar">
+      <div class="sidebar-tabs">
+        <button class="tab-btn active" onclick="switchTab('metrics')">METRICS</button>
+        <button class="tab-btn" onclick="switchTab('params')">PARAMS</button>
+      </div>
+
+      <!-- Metrics tab -->
+      <div class="tab-pane active" id="tab-metrics">
+        <div class="regime-banner" id="regime-banner">
+          <div>
+            <div style="font-size:10px;color:var(--text-2);margin-bottom:4px;letter-spacing:.08em">CURRENT REGIME</div>
+            <div class="regime-label" id="regime-label">—</div>
+          </div>
+          <div class="regime-votes">
+            <strong id="regime-votes">—</strong>
+            votes for TREND
+          </div>
+        </div>
+
+        <div class="metrics-grid">
+          <div class="metric-card" id="card-adx">
+            <div class="metric-name">ADX</div>
+            <div class="metric-value" id="val-adx">—</div>
+            <span class="metric-vote" id="vote-adx">—</span>
+          </div>
+          <div class="metric-card" id="card-atr">
+            <div class="metric-name">ATR Ratio</div>
+            <div class="metric-value" id="val-atr">—</div>
+            <span class="metric-vote" id="vote-atr">—</span>
+          </div>
+          <div class="metric-card" id="card-bb">
+            <div class="metric-name">BB Width</div>
+            <div class="metric-value" id="val-bb">—</div>
+            <span class="metric-vote" id="vote-bb">—</span>
+          </div>
+          <div class="metric-card" id="card-hurst">
+            <div class="metric-name">Hurst</div>
+            <div class="metric-value" id="val-hurst">—</div>
+            <span class="metric-vote" id="vote-hurst">—</span>
+          </div>
+        </div>
+
+        <div class="pos-ratio-badge">
+          <div>
+            <div style="font-size:10px;color:var(--text-2);margin-bottom:2px">POS RECOMMENDATION</div>
+            <div class="pos-ratio-value" id="val-pos-ratio">0%</div>
+          </div>
+          <div style="text-align:right">
+            <span class="spot-accum-badge" id="badge-spot-accum">PROFIT TO BTC</span>
+          </div>
+        </div>
+
+        <div style="padding:10px 0; border-top:1px solid var(--border); margin-top:4px;">
+          <div
+            style="font-size:10px;color:var(--text-2);margin-bottom:8px;text-transform:uppercase;letter-spacing:.08em">
+            Regime Timeline</div>
+          <div id="timeline-bars" style="display:flex;height:18px;border-radius:4px;overflow:hidden;gap:1px;"></div>
+          <div style="display:flex;justify-content:space-between;margin-top:4px;font-size:10px;color:var(--text-3);">
+            <span id="tl-start">—</span><span id="tl-end">—</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Params tab -->
+      <div class="tab-pane" id="tab-params">
+        <div class="param-section">
+          <div class="param-section-title">ADX</div>
+          <div class="param-row">
+            <span class="param-label">Period</span>
+            <input class="param-input" id="p-adx-period" type="number" value="14" min="2" max="50" />
+          </div>
+          <div class="param-row">
+            <span class="param-label">Trend Threshold</span>
+            <input class="param-input" id="p-adx-threshold" type="number" value="25" min="1" max="100" step="0.5" />
+          </div>
+          <div class="param-row">
+            <span class="param-label">Fuse Threshold</span>
+            <input class="param-input" id="p-adx-fuse" type="number" value="30" min="1" max="100" step="0.5" />
+          </div>
+        </div>
+
+        <div class="param-section">
+          <div class="param-section-title">ATR Ratio</div>
+          <div class="param-row">
+            <span class="param-label">Short Period</span>
+            <input class="param-input" id="p-atr-short" type="number" value="7" min="2" max="50" />
+          </div>
+          <div class="param-row">
+            <span class="param-label">Long Period</span>
+            <input class="param-input" id="p-atr-long" type="number" value="28" min="2" max="200" />
+          </div>
+          <div class="param-row">
+            <span class="param-label">Ratio Threshold</span>
+            <input class="param-input" id="p-atr-ratio" type="number" value="1.5" min="0.1" max="5" step="0.1" />
+          </div>
+        </div>
+
+        <div class="param-section">
+          <div class="param-section-title">Bollinger Bands</div>
+          <div class="param-row">
+            <span class="param-label">Period</span>
+            <input class="param-input" id="p-bb-period" type="number" value="20" min="2" max="100" />
+          </div>
+          <div class="param-row">
+            <span class="param-label">Std Dev</span>
+            <input class="param-input" id="p-bb-std" type="number" value="2.0" min="0.5" max="5" step="0.1" />
+          </div>
+          <div class="param-row">
+            <span class="param-label">Width Threshold</span>
+            <input class="param-input" id="p-bb-width" type="number" value="0.1" min="0.01" max="1" step="0.01" />
+          </div>
+        </div>
+
+        <div class="param-section">
+          <div class="param-section-title">Hurst Exponent</div>
+          <div class="param-row">
+            <span class="param-label">Period</span>
+            <input class="param-input" id="p-hurst-period" type="number" value="100" min="20" max="500" />
+          </div>
+          <div class="param-row">
+            <span class="param-label">Trend Threshold</span>
+            <input class="param-input" id="p-hurst-threshold" type="number" value="0.5" min="0.1" max="0.9"
+              step="0.05" />
+          </div>
+          <div class="param-row">
+            <span class="param-label">Fuse Threshold</span>
+            <input class="param-input" id="p-hurst-fuse" type="number" value="0.6" min="0.1" max="0.9" step="0.05" />
+          </div>
+          <div class="param-row">
+            <span class="param-label">Spot Accum (&lt;)</span>
+            <input class="param-input" id="p-hurst-extreme" type="number" value="0.35" min="0.1" max="0.5"
+              step="0.05" />
+          </div>
+        </div>
+
+        <div class="param-section">
+          <div class="param-section-title">Voting</div>
+          <div class="param-row">
+            <span class="param-label">Trend Vote Threshold</span>
+            <input class="param-input" id="p-vote-threshold" type="number" value="2" min="1" max="4" />
+          </div>
+        </div>
+
+        <button class="btn-reset" onclick="resetParams()">↺ Reset to Defaults</button>
+      </div>
+    </aside>
+
+  </div>
+
+  <!-- Toast -->
+  <div id="toast"></div>
+
+  <script>
+    // ── State ─────────────────────────────────────────────────────────
+    let currentMode = 'backtest';
+    let chart = null;
+    let candleSeries = null;
+    let seriesMarkers = [];
+
+    const DEFAULTS = {
+      adx_period: 14, adx_trend_threshold: 25.0, adx_fuse_threshold: 30.0,
+      atr_short_period: 7, atr_long_period: 28, atr_ratio_threshold: 1.5,
+      bb_period: 20, bb_std: 2.0, bb_width_threshold: 0.1,
+      hurst_period: 100, hurst_threshold: 0.5, hurst_fuse_threshold: 0.6, hurst_extreme_low: 0.35,
+      trend_vote_threshold: 2,
+    };
+
+    let autoTimer = null;
+
+    // ── Chart init ────────────────────────────────────────────────────
+    function initChart() {
+      const container = document.getElementById('chart-container');
+      chart = LightweightCharts.createChart(container, {
+        layout: {
+          background: { color: '#0a0e1a' },
+          textColor: '#8899bb',
+          fontFamily: "'JetBrains Mono', monospace",
+        },
+        grid: {
+          vertLines: { color: '#0f1629' },
+          horzLines: { color: '#0f1629' },
+        },
+        crosshair: {
+          mode: LightweightCharts.CrosshairMode.Normal,
+          vertLine: { color: '#2a3f6f', labelBackgroundColor: '#141d35' },
+          horzLine: { color: '#2a3f6f', labelBackgroundColor: '#141d35' },
+        },
+        rightPriceScale: {
+          borderColor: '#1e2d4d',
+        },
+        timeScale: {
+          borderColor: '#1e2d4d',
+          timeVisible: true,
+          secondsVisible: false,
+        },
+        handleScroll: true,
+        handleScale: true,
+      });
+
+      candleSeries = chart.addCandlestickSeries({
+        upColor: '#00e676',
+        downColor: '#ff4d6d',
+        borderUpColor: '#00e676',
+        borderDownColor: '#ff4d6d',
+        wickUpColor: '#00e676',
+        wickDownColor: '#ff4d6d',
+      });
+
+      // Resize observer
+      new ResizeObserver(() => {
+        chart.applyOptions({
+          width: container.clientWidth,
+          height: container.clientHeight,
+        });
+      }).observe(container);
+    }
+
+    // ── Mode toggle ───────────────────────────────────────────────────
+    function setMode(mode) {
+      if (currentMode === mode) return;
+      currentMode = mode;
+      document.getElementById('btn-backtest').classList.toggle('active', mode === 'backtest');
+      document.getElementById('btn-live').classList.toggle('active', mode === 'live');
+
+      // If switching to backtest, turn off auto
+      if (mode === 'backtest' && document.getElementById('chk-auto').checked) {
+        document.getElementById('chk-auto').checked = false;
+        toggleAuto();
       }
-    })
-    .catch(() => {}); // silently ignore if API not ready
-});
+    }
 
-// Keyboard shortcut: Enter to run
-document.addEventListener('keydown', e => {
-  if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) runAnalysis();
-});
-</script>
+    // ── Tab switch ────────────────────────────────────────────────────
+    function switchTab(tab) {
+      document.querySelectorAll('.tab-btn').forEach((b, i) => {
+        b.classList.toggle('active', ['metrics', 'params'][i] === tab);
+      });
+      document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
+      document.getElementById('tab-' + tab).classList.add('active');
+    }
+
+    // ── Collect params ────────────────────────────────────────────────
+    function getParams() {
+      return {
+        adx_period: parseInt(document.getElementById('p-adx-period').value),
+        adx_trend_threshold: parseFloat(document.getElementById('p-adx-threshold').value),
+        adx_fuse_threshold: parseFloat(document.getElementById('p-adx-fuse').value),
+        atr_short_period: parseInt(document.getElementById('p-atr-short').value),
+        atr_long_period: parseInt(document.getElementById('p-atr-long').value),
+        atr_ratio_threshold: parseFloat(document.getElementById('p-atr-ratio').value),
+        bb_period: parseInt(document.getElementById('p-bb-period').value),
+        bb_std: parseFloat(document.getElementById('p-bb-std').value),
+        bb_width_threshold: parseFloat(document.getElementById('p-bb-width').value),
+        hurst_period: parseInt(document.getElementById('p-hurst-period').value),
+        hurst_threshold: parseFloat(document.getElementById('p-hurst-threshold').value),
+        hurst_fuse_threshold: parseFloat(document.getElementById('p-hurst-fuse').value),
+        hurst_extreme_low: parseFloat(document.getElementById('p-hurst-extreme').value),
+        trend_vote_threshold: parseInt(document.getElementById('p-vote-threshold').value),
+      };
+    }
+
+    function resetParams() {
+      document.getElementById('p-adx-period').value = DEFAULTS.adx_period;
+      document.getElementById('p-adx-threshold').value = DEFAULTS.adx_trend_threshold;
+      document.getElementById('p-adx-fuse').value = DEFAULTS.adx_fuse_threshold;
+      document.getElementById('p-atr-short').value = DEFAULTS.atr_short_period;
+      document.getElementById('p-atr-long').value = DEFAULTS.atr_long_period;
+      document.getElementById('p-atr-ratio').value = DEFAULTS.atr_ratio_threshold;
+      document.getElementById('p-bb-period').value = DEFAULTS.bb_period;
+      document.getElementById('p-bb-std').value = DEFAULTS.bb_std;
+      document.getElementById('p-bb-width').value = DEFAULTS.bb_width_threshold;
+      document.getElementById('p-hurst-period').value = DEFAULTS.hurst_period;
+      document.getElementById('p-hurst-threshold').value = DEFAULTS.hurst_threshold;
+      document.getElementById('p-hurst-fuse').value = DEFAULTS.hurst_fuse_threshold;
+      document.getElementById('p-hurst-extreme').value = DEFAULTS.hurst_extreme_low;
+      document.getElementById('p-vote-threshold').value = DEFAULTS.trend_vote_threshold;
+    }
+
+    // ── Status helpers ────────────────────────────────────────────────
+    function setStatus(state, text) {
+      const dot = document.getElementById('status-dot');
+      dot.className = 'status-dot ' + state;
+      document.getElementById('status-text').textContent = text;
+    }
+
+    function showToast(msg) {
+      const t = document.getElementById('toast');
+      if (typeof msg === 'object') {
+        msg = JSON.stringify(msg, (key, value) =>
+          typeof value === 'bigint' ? value.toString() : value
+        );
+      }
+      t.textContent = msg;
+      t.classList.add('show');
+      setTimeout(() => t.classList.remove('show'), 5000);
+    }
+
+    function setLoading(on, isAuto = false) {
+      // Don't show full overlay during auto-refresh to avoid flickering
+      if (!isAuto) {
+        document.getElementById('loading-overlay').classList.toggle('show', on);
+      }
+      document.getElementById('btn-run').disabled = on;
+    }
+
+    function toggleAuto() {
+      const isEnabled = document.getElementById('chk-auto').checked;
+      document.getElementById('auto-toggle-ui').classList.toggle('active', isEnabled);
+
+      if (isEnabled) {
+        if (currentMode !== 'live') {
+          showToast("Auto-refresh is only available in LIVE mode");
+          document.getElementById('chk-auto').checked = false;
+          document.getElementById('auto-toggle-ui').classList.remove('active');
+          return;
+        }
+        runAnalysis(true);
+        autoTimer = setInterval(() => {
+          if (currentMode === 'live') {
+            runAnalysis(true);
+          } else {
+            document.getElementById('chk-auto').checked = false;
+            toggleAuto();
+          }
+        }, 30000); // 30s refresh
+      } else {
+        if (autoTimer) {
+          clearInterval(autoTimer);
+          autoTimer = null;
+        }
+      }
+    }
+
+    // ── Render metrics ────────────────────────────────────────────────
+    function renderMetrics(latest) {
+      const reg = latest.regime; // RANGE, TREND, FUSE
+      const isRange = reg === 'RANGE';
+
+      // Banner
+      const banner = document.getElementById('regime-banner');
+      banner.className = 'regime-banner ' + reg.toLowerCase();
+      const lbl = document.getElementById('regime-label');
+      lbl.className = 'regime-label ' + reg.toLowerCase();
+      lbl.textContent = reg;
+      document.getElementById('regime-votes').textContent = `${latest.trend_votes}/${latest.total_votes}`;
+
+      // Position & Spot Accum
+      document.getElementById('val-pos-ratio').textContent = (latest.position_ratio * 100).toFixed(0) + '%';
+      const spotBadge = document.getElementById('badge-spot-accum');
+      spotBadge.classList.toggle('active', latest.accumulate_spot);
+      spotBadge.textContent = latest.accumulate_spot ? 'SPOT ACCUM: ON' : 'SPOT ACCUM: OFF';
+
+      // Individual metrics
+      function setMetric(id, value, vote, label) {
+        document.getElementById('val-' + id).textContent = value;
+        const voteEl = document.getElementById('vote-' + id);
+        voteEl.textContent = vote ? 'TREND' : 'RANGE';
+        voteEl.className = 'metric-vote ' + (vote ? 'trend' : 'range');
+        document.getElementById('card-' + id).className = 'metric-card vote-' + (vote ? 'trend' : 'range');
+      }
+
+      setMetric('adx', latest.adx_value.toFixed(1), latest.adx_vote, 'ADX');
+      setMetric('atr', latest.atr_ratio.toFixed(3), latest.atr_vote, 'ATR');
+      setMetric('bb', latest.bb_width.toFixed(4), latest.bb_vote, 'BB');
+      setMetric('hurst', latest.hurst_value.toFixed(3), latest.hurst_vote, 'Hurst');
+    }
+
+    // ── Render regime background bands ───────────────────────────────
+    function renderRegimeBands(segments) {
+      if (!chart || !candleSeries) return;
+
+      // Use series markers as lightweight band approximation
+      // For proper bands we use background rectangles via primitives
+      // Lightweight Charts v4 supports series markers; we'll use background color bands
+      // by adding rectangle primitives
+      const primitives = segments.map(seg => ({
+        time: seg.start_time,
+        endTime: seg.end_time,
+        color: seg.regime === 'RANGE'
+          ? 'rgba(0,230,118,0.07)'
+          : 'rgba(255,77,109,0.07)',
+      }));
+
+      // Apply as background series (area series trick)
+      // We'll use ISeriesPrimitive approach via markers for simplicity
+      const markers = segments.map(seg => ({
+        time: seg.start_time,
+        position: 'aboveBar',
+        color: seg.regime === 'RANGE' ? '#00e676' : '#ff4d6d',
+        shape: 'circle',
+        size: 0.3,
+        text: seg.regime === 'RANGE' ? '●' : '▲',
+      }));
+
+      candleSeries.setMarkers(markers);
+    }
+
+    // ── Render timeline bar ───────────────────────────────────────────
+    function renderTimeline(segments) {
+      const container = document.getElementById('timeline-bars');
+      container.innerHTML = '';
+      if (!segments.length) return;
+
+      const total = segments[segments.length - 1].end_time - segments[0].start_time;
+      segments.forEach(seg => {
+        const pct = ((seg.end_time - seg.start_time) / total * 100).toFixed(2);
+        const bar = document.createElement('div');
+        bar.style.cssText = `flex:0 0 ${pct}%;height:100%;background:${seg.regime === 'RANGE' ? 'rgba(0,230,118,0.5)' : 'rgba(255,77,109,0.5)'
+          };border-radius:2px;`;
+        bar.title = `${seg.regime}: ${new Date(seg.start_time * 1000).toLocaleDateString()} → ${new Date(seg.end_time * 1000).toLocaleDateString()}`;
+        container.appendChild(bar);
+      });
+
+      const fmt = ts => new Date(ts * 1000).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric' });
+      document.getElementById('tl-start').textContent = fmt(segments[0].start_time);
+      document.getElementById('tl-end').textContent = fmt(segments[segments.length - 1].end_time);
+    }
+
+    // ── Main analysis runner ──────────────────────────────────────────
+    async function runAnalysis(isAuto = false) {
+      const symbol = document.getElementById('sel-symbol').value;
+      const timeframe = document.getElementById('sel-timeframe').value;
+      const sinceDays = parseInt(document.getElementById('inp-days').value);
+      const params = getParams();
+
+      setLoading(true, isAuto);
+      setStatus('loading', isAuto ? 'Auto-updating…' : 'Fetching data…');
+
+      const payload = {
+        mode: currentMode,
+        symbol,
+        timeframe,
+        since_days: sinceDays,
+        params,
+      };
+
+      try {
+        const res = await fetch('/api/regime', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+
+        if (!res.ok) {
+          const err = await res.json();
+          let msg = err.detail;
+          if (Array.isArray(msg)) {
+            msg = msg.map(m => `${m.loc.join('.')}: ${m.msg}`).join('; ');
+          } else if (typeof msg === 'object') {
+            msg = JSON.stringify(msg);
+          }
+          throw new Error(msg || `HTTP ${res.status}`);
+        }
+
+        const data = await res.json();
+
+        // Hide empty state
+        document.getElementById('empty-state').style.display = 'none';
+
+        // Update chart title
+        document.getElementById('chart-title').textContent =
+          `${data.symbol} · ${data.timeframe} · ${data.mode.toUpperCase()}`;
+        document.getElementById('chart-subtitle').textContent =
+          `${data.candles.length} candles loaded`;
+
+        // Feed candles
+        candleSeries.setData(data.candles.map(c => ({
+          time: c.time,
+          open: c.open, high: c.high, low: c.low, close: c.close,
+        })));
+
+        // Regime bands
+        renderRegimeBands(data.segments);
+        renderTimeline(data.segments);
+
+        // Metrics
+        renderMetrics(data.latest);
+
+        // Auto-switch to metrics tab
+        switchTab('metrics');
+
+        chart.timeScale().fitContent();
+        setStatus('ok', `Updated ${new Date().toLocaleTimeString()}`);
+
+      } catch (e) {
+        setStatus('error', 'Error');
+        showToast('⚠ ' + e.message);
+        console.error(e);
+      } finally {
+        setLoading(false);
+      }
+    }
+
+    // ── Boot ──────────────────────────────────────────────────────────
+    window.addEventListener('DOMContentLoaded', () => {
+      initChart();
+
+      // Load defaults from API
+      fetch('/api/config')
+        .then(r => r.json())
+        .then(cfg => {
+          if (cfg.adx_period) {
+            document.getElementById('p-adx-period').value = cfg.adx_period;
+            document.getElementById('p-adx-threshold').value = cfg.adx_trend_threshold;
+            document.getElementById('p-adx-fuse').value = cfg.adx_fuse_threshold || 30;
+            document.getElementById('p-atr-short').value = cfg.atr_short_period;
+            document.getElementById('p-atr-long').value = cfg.atr_long_period;
+            document.getElementById('p-atr-ratio').value = cfg.atr_ratio_threshold;
+            document.getElementById('p-bb-period').value = cfg.bb_period;
+            document.getElementById('p-bb-std').value = cfg.bb_std;
+            document.getElementById('p-bb-width').value = cfg.bb_width_threshold;
+            document.getElementById('p-hurst-period').value = cfg.hurst_period;
+            document.getElementById('p-hurst-threshold').value = cfg.hurst_threshold;
+            document.getElementById('p-hurst-fuse').value = cfg.hurst_fuse_threshold || 0.6;
+            document.getElementById('p-hurst-extreme').value = cfg.hurst_extreme_low || 0.35;
+            document.getElementById('p-vote-threshold').value = cfg.trend_vote_threshold;
+          }
+        })
+        .catch(() => { }); // silently ignore if API not ready
+    });
+
+    // Keyboard shortcut: Enter to run
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) runAnalysis();
+    });
+  </script>
 </body>
+
 </html>

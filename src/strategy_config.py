@@ -13,12 +13,13 @@ src/strategy_config.py - 策略参数加载模块
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Optional
+from typing import Optional, List
 
 import yaml
 from pydantic import BaseModel, ValidationError
 
 from src.regime_filter import RegimeFilterConfig
+from src.grid_engine import GridEngineConfig
 from src.logger import setup_logger
 
 logger = setup_logger("strategy_config")
@@ -27,12 +28,39 @@ logger = setup_logger("strategy_config")
 _DEFAULT_CONFIG_PATH = Path(__file__).parent.parent / "config" / "strategy.yaml"
 
 
+class TierConfig(BaseModel):
+    hurst_max: float
+    position_ratio: float
+    accumulate_spot: bool
+
+
+class FuseConditions(BaseModel):
+    oi_change_1h_threshold: float = 0.12
+    oi_change_24h_threshold: float = 0.12
+    hurst_adx_fuse: bool = True
+
+
+class PositionSizingConfig(BaseModel):
+    tiers: List[TierConfig] = []
+    fuse_conditions: FuseConditions = FuseConditions()
+
+
+class RiskControlConfig(BaseModel):
+    global_stop_loss_pct: float = 0.15
+    funding_rate_max: float = 0.0004
+    funding_rate_min: float = -0.0002
+    cvd_divergence_enabled: bool = True
+
+
 class StrategyConfig(BaseModel):
     """
     顶层策略配置容器（Pydantic 模型）。
-    持有所有子模块的配置对象，后续 Ticket 的配置（如 GridConfig）也会加入此处。
+    持有所有子模块的配置对象。
     """
     regime_filter: RegimeFilterConfig = RegimeFilterConfig()
+    position_sizing: PositionSizingConfig = PositionSizingConfig()
+    grid_engine: GridEngineConfig = GridEngineConfig()
+    risk_control: RiskControlConfig = RiskControlConfig()
 
 
 def load_strategy_config(path: Optional[str | Path] = None) -> StrategyConfig:
