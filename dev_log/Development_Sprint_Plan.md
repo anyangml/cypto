@@ -75,3 +75,27 @@
 - **验收标准 (AC):**
     - 手动模拟一个大跌场景，策略必须能触发止损并发送告警通知。
     - 每天定时发送一次包含当前持仓和总资产的 Daily Report。
+
+---
+
+## Ticket-ADH-001: 策略可视化调试面板 (Strategy Visualization Dashboard)
+- **类型:** Ad-hoc / 调试工具
+- **依赖:** Ticket-001, Ticket-002
+- **需求:**
+    - 开发一个基于 Web 的可视化调试面板，支持两种数据模式：
+        - **回测模式 (Backtest)**：从 Binance Testnet 拉取历史 K 线数据进行分析。
+        - **实时模式 (Live)**：从 Binance 主网拉取实时数据，定时刷新。
+    - 核心功能：
+        - 绘制专业级 K 线图（Candlestick），使用 TradingView Lightweight Charts。
+        - 在 K 线图上叠加 Regime Filter 的判断结果（RANGE/TREND 区间着色）。
+        - 实时显示各指标数值：ADX、ATR 比例、BB Width、Hurst 指数及投票结果。
+        - 提供参数调整面板：可在 UI 上实时修改 RegimeFilterConfig 的所有参数并重新计算。
+    - 技术架构：
+        - **后端**：FastAPI，提供 REST API 供前端调用。
+        - **前端**：单页 HTML + Vanilla JS + TradingView Lightweight Charts。
+        - 风格：深色科技风，贴合 Crypto 交易终端美学。
+- **验收标准 (AC):**
+    - 能够切换回测/实时模式并正确拉取对应数据源的 K 线。
+    - K 线图上能够清晰标注 RANGE（绿色背景）和 TREND（红色背景）区间。
+    - 修改任意 Regime Filter 参数后，点击"重新计算"能立即更新图表和指标数值。
+    - 界面在 1440p 分辨率下布局整洁，无明显错位。
