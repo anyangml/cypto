@@ -259,14 +259,21 @@ class BacktestEngine:
 
                 total_equity = self.balance_usdt + self.balance_btc * current_price
                 calc_window  = df.iloc[max(0, bar_idx - 300): bar_idx + 1]
-                grid_plan    = self.ge.calculate_grid(
-                    calc_window,
-                    total_balance=total_equity,
-                    position_ratio=regime_res.position_ratio,
-                )
-                self.last_grid_mid = grid_plan["mid_price"]
-                self._active_grid_plan = grid_plan
-                self._place_orders(grid_plan, current_price)
+                
+                try:
+                    grid_plan    = self.ge.calculate_grid(
+                        calc_window,
+                        total_balance=total_equity,
+                        position_ratio=regime_res.position_ratio,
+                    )
+                    self.last_grid_mid = grid_plan["mid_price"]
+                    self._active_grid_plan = grid_plan
+                    self._place_orders(grid_plan, current_price)
+                except ValueError as e:
+                    # 数据不足或指标不可用，跳过本次网格计算
+                    logger.debug("网格计划生成失败(数据不足或指标不可用): %s，跳过本轮", e)
+                    # 保持现有网格计划不变，不重置
+                    pass
 
         # 记录每根 K 线时刻的活跃网格计划（用于前端回溯显示）
         # 即使是 None 也要记录，显式告诉前端“此处无网格”，防止回溯到更早的过期网格
