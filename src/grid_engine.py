@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from typing import Optional
 import pandas as pd
+import numpy as np
 from pydantic import BaseModel, Field
 
 from src.logger import setup_logger
@@ -95,16 +96,45 @@ class GridEngine:
                 buy_grid_enabled  bool
                 sell_grid_enabled bool
         """
-        if len(df) < self.config.ma_long_period:
+        # 数据不足 hard guard：检查最小数据长度，覆盖所有需要的窗口
+        # ma200_slope_lookback 需要加上是因为计算斜率时需要回看额外的历史数据点
+        # 例如：计算 MA200[-1] 需要前 200 根 K 线，计算 MA200[-(lookback+1)] 则需要前 200+lookback 根
+        min_required_length = max(
+            self.config.ma_long_period,
+            self.config.ma_mid_period,
+            self.config.atr_period,
+            self.config.overbought_bb_period,
+        ) + self.config.ma200_slope_lookback
+        
+        if len(df) < min_required_length:
             raise ValueError(
-                f"数据不足：需要至少 {self.config.ma_long_period} 根 K 线计算基准线"
+                f"数据不足：需要至少 {min_required_length} 根 K 线 "
+                f"(ma_long={self.config.ma_long_period}, "
+                f"ma_mid={self.config.ma_mid_period}, "
+                f"atr={self.config.atr_period}, "
+                f"bb={self.config.overbought_bb_period}, "
+                f"slope_lookback={self.config.ma200_slope_lookback})，"
+                f"当前只有 {len(df)} 根。"
             )
 
         latest_close = float(df["close"].iloc[-1])
+        
+        # 检查最新价格是否有效
+        if not pd.notna(latest_close) or not np.isfinite(latest_close):
+            raise ValueError(
+                f"数据不可用：最新收盘价为 {latest_close}，无法计算网格。"
+            )
 
         # 1. 基准线 (MA200, MA20)
         ma_long = float(df["close"].rolling(self.config.ma_long_period).mean().iloc[-1])
         ma_mid  = float(df["close"].rolling(self.config.ma_mid_period).mean().iloc[-1])
+        
+        # isfinite 校验：确保 MA 计算结果有效
+        if not np.isfinite(ma_long) or not np.isfinite(ma_mid):
+            raise ValueError(
+                f"指标不可用：MA 计算结果包含 NaN/Inf "
+                f"(ma_long={ma_long}, ma_mid={ma_mid})，数据可能不足或质量异常。"
+            )
 
         # 2. 资金利用率
         is_bull = latest_close > ma_long
@@ -116,10 +146,25 @@ class GridEngine:
         atr   = self._calc_atr(df, self.config.atr_period)
         upper = latest_close + self.config.atr_band_multiplier * atr
         lower = latest_close - self.config.atr_band_multiplier * atr
+        
+        # isfinite 校验：确保 ATR 和边界计算结果有效
+        if not np.isfinite(atr) or not np.isfinite(upper) or not np.isfinite(lower):
+            raise ValueError(
+                f"指标不可用：ATR 或边界计算结果包含 NaN/Inf "
+                f"(atr={atr}, upper={upper}, lower={lower})，数据可能不足或质量异常。"
+            )
 
         # 4. 超买保护 (BB 2.5σ + Bias)
         bias      = (latest_close - ma_mid) / ma_mid
         bb_upper  = self._calc_bb_upper(df, self.config.overbought_bb_period, self.config.overbought_bb_std)
+        
+        # isfinite 校验：确保 BB 计算结果有效
+        if not np.isfinite(bb_upper) or not np.isfinite(bias):
+            raise ValueError(
+                f"指标不可用：BB 或 Bias 计算结果包含 NaN/Inf "
+                f"(bb_upper={bb_upper}, bias={bias})，数据可能不足或质量异常。"
+            )
+        
         overbought_triggered = (
             latest_close >= bb_upper and bias > self.config.bias_overbought_threshold
         )

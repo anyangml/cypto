@@ -146,11 +146,17 @@ class GridStrategyExecutor:
             return
 
         # ── 4. 生成网格计划 ──────────────────────────────────────────
-        grid_plan = self.ge.calculate_grid(
-            df,
-            total_balance=total_equity,
-            position_ratio=regime_res.position_ratio,
-        )
+        try:
+            grid_plan = self.ge.calculate_grid(
+                df,
+                total_balance=total_equity,
+                position_ratio=regime_res.position_ratio,
+            )
+        except ValueError as e:
+            logger.warning("网格计划生成失败(数据不足或指标不可用): %s", e)
+            logger.info("跳过本轮网格更新")
+            return
+        
         logger.info(
             "网格计划: Range=[%.2f, %.2f], Mid=%.2f",
             grid_plan["lower_boundary"],

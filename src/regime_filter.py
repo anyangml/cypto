@@ -184,6 +184,27 @@ class RegimeFilter:
     def __init__(self, config: Optional[RegimeFilterConfig] = None, tiers: Optional[list] = None) -> None:
         self.config = config or RegimeFilterConfig()
         self.tiers = tiers or []
+        
+        # 对 tiers 按 hurst_max 升序排序，确保分级逻辑的确定性
+        if self.tiers:
+            self.tiers = sorted(self.tiers, key=lambda t: t.hurst_max)
+            
+            # 轻量校验：确保 hurst_max 单调递增、position_ratio 在 [0, 1] 范围内
+            # prev_max 初始化为负无穷，确保第一个 tier 的任意非负 hurst_max 都能通过比较
+            prev_max = -float('inf')
+            for i, tier in enumerate(self.tiers):
+                if tier.hurst_max <= prev_max:
+                    raise ValueError(
+                        f"Tier 校验失败：tiers[{i}].hurst_max ({tier.hurst_max}) "
+                        f"必须严格大于前一层级 ({prev_max})。排序后仍存在重复值。"
+                    )
+                if not (0.0 <= tier.position_ratio <= 1.0):
+                    raise ValueError(
+                        f"Tier 校验失败：tiers[{i}].position_ratio ({tier.position_ratio}) "
+                        f"必须在 [0, 1] 范围内。"
+                    )
+                prev_max = tier.hurst_max
+        
         logger.info("RegimeFilter 初始化完成 | 配置: %s | 分级规则数: %d", self.config, len(self.tiers))
 
     # ------------------------------------------------------------------
