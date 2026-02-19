@@ -33,6 +33,7 @@ class MarketRegime(str, Enum):
     RANGE = "RANGE"  # 横盘震荡，适合网格
     TREND = "TREND"  # 单边趋势，暂停新开网格
     FUSE  = "FUSE"   # 熔断状态，紧急停止所有操作
+    CHAOS = "CHAOS"  # 混沌状态，风险过高暂停网格 (High Hurst)
 
 
 class RegimeFilterConfig(BaseModel):
@@ -302,6 +303,12 @@ class RegimeFilter:
         # 强制修正：如果熔断或趋势判断明确，仓位清零（除非是极低 Hurst，但通常极低 Hurst 不会触发熔断）
         if regime in [MarketRegime.TREND, MarketRegime.FUSE]:
             position_ratio = 0.0
+        
+        # v2.1: 引入 CHAOS 状态
+        # 如果当前判定为 RANGE，但因为风控（如 High Hurst）导致仓位被压为 0，
+        # 此时应标记为 CHAOS，以便 UI 直观展示“震荡但风险过高”。
+        if regime == MarketRegime.RANGE and position_ratio <= 0:
+            regime = MarketRegime.CHAOS
 
         result = RegimeResult(
             regime=regime,

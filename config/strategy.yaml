@@ -52,7 +52,7 @@ regime_filter:
   # -----------------------------------------------------------
   hurst_period: 100           # 用于计算 Hurst 的历史数据点数（推荐范围：50-200）
   hurst_threshold: 0.5        # Hurst 超过此值视为趋势（通常固定为 0.5）
-  hurst_fuse_threshold: 0.6   # 熔断阈值：Hurst 超过此值触发趋势保护（配合 adx_fuse_threshold）
+  hurst_fuse_threshold: 0.65   # 熔断阈值：Hurst 超过此值触发趋势保护（配合 adx_fuse_threshold）
   hurst_extreme_low: 0.35     # 极低阈值：低于此值时，将部分网格利润转为现货 BTC
 
   # -----------------------------------------------------------
@@ -95,11 +95,11 @@ position_sizing:
       position_ratio: 1.00
       accumulate_spot: false
 
-    - hurst_max: 0.55   # 0.50 ≤ H < 0.55：接近随机游走，半仓
+    - hurst_max: 0.60   # 0.50 ≤ H < 0.60：接近随机游走，半仓（原 0.55）
       position_ratio: 0.50
       accumulate_spot: false
 
-    - hurst_max: 1.00   # H ≥ 0.55：趋势性，停止网格
+    - hurst_max: 1.00   # H ≥ 0.60：趋势性，停止网格
       position_ratio: 0.00
       accumulate_spot: false
 
@@ -129,7 +129,7 @@ grid_engine:
   # 价格 > MA200：看多背景，高资金利用率
   # 价格 < MA200：看空背景，低资金利用率
   capital_above_ma_long: 0.80   # 价格高于 MA200 时的网格资金利用率（80%）
-  capital_below_ma_long: 0.30   # 价格低于 MA200 时的网格资金利用率（30%）
+  capital_below_ma_long: 0.10   # 价格低于 MA200 时的网格资金利用率（原 0.30）
 
   # -----------------------------------------------------------
   # 动态网格区间 (ATR-based Boundaries)
@@ -162,20 +162,20 @@ grid_engine:
   # -----------------------------------------------------------
   # 网格步长与层级
   # -----------------------------------------------------------
-  grid_levels: 20             # 增加层数：提高捕获频率（原 10）
+  grid_levels: 10             # 增加层数：提高捕获频率（原 20）
   min_grid_spacing_pct: 0.003 # 最小网格间距（0.3%，防止过密）
   max_grid_spacing_pct: 0.05  # 最大网格间距（5%，防止过稀）
   min_order_qty: 0.0001       # 最小单笔下单量（BTC），防止资金摊薄后被过滤（原默认 0.0004）
   min_order_value: 5.0        # 最小单笔名义价值 (USDT)
   usdt_ratio: 0.5             # 激活资金中分配给买单的比例 (0.5=买卖平衡)
-  grid_reset_drift_pct: 0.03  # 价格偏离中轴 3% 才重置网格（增加网格韧性）
+  grid_reset_drift_pct: 0.05  # 价格偏离中轴 5% 才重置网格（原 3%，增加网格韧性）
 
   # -----------------------------------------------------------
   # 偏置网格 / 持仓倾斜 (Biased Grid)
   # 在空头背景下自动降低买单权重，对冲单边下跌压力。
   # -----------------------------------------------------------
   dynamic_usdt_ratio_enabled: true   # 已开启：空头防御偏置
-  bear_market_usdt_ratio: 0.2        # 空头背景下（Price < MA200）买单仅占 20% 资金
+  bear_market_usdt_ratio: 0.1        # 空头背景下（Price < MA200）买单仅占 10% 资金（原 20%）
 
 # =============================================================
 # 四、风险控制参数 (Risk Control)

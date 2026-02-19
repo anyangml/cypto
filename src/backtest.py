@@ -100,7 +100,15 @@ class BacktestEngine:
         regime_results: List[Optional[RegimeResult]] = self.rf.scan_dataframe_full(df)
 
         # 预热期：需要足够数据给 MA200 / ATR 等指标
-        warmup_bars = max(self.ge.config.ma_long_period, 200)
+        # Fix: 必须包含 slope_lookback，否则 GridEngine 会报数据不足
+        min_required = max(
+            self.ge.config.ma_long_period,
+            self.ge.config.ma_mid_period,
+            self.ge.config.atr_period,
+            self.ge.config.overbought_bb_period,
+        ) + self.ge.config.ma200_slope_lookback
+        
+        warmup_bars = max(min_required, 200)
 
         for bar_idx, (bar, ticks) in enumerate(feed.iter_bars()):
             if bar_idx < warmup_bars:
@@ -245,7 +253,7 @@ class BacktestEngine:
         current_price = bar.close
         regime_status = regime_res.regime
 
-        if regime_status in (MarketRegime.FUSE, MarketRegime.TREND):
+        if regime_status in (MarketRegime.FUSE, MarketRegime.TREND, MarketRegime.CHAOS):
             # 任何时刻只要进入非 RANGE 状态，都强制清空网格状态
             if self.orders or self._active_grid_plan:
                 self.orders.clear()

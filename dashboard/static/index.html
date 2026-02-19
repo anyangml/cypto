@@ -470,6 +470,16 @@
       color: var(--yellow);
     }
 
+    .regime-banner.chaos {
+      border-color: #ff9800;
+      /* Orange */
+      background: rgba(255, 152, 0, 0.15);
+    }
+
+    .regime-label.chaos {
+      color: #ff9800;
+    }
+
     .regime-votes {
       font-size: 11px;
       color: var(--text-2);
@@ -1400,7 +1410,7 @@
 
     // ── Render metrics ────────────────────────────────────────────────
     function renderMetrics(latest) {
-      const reg = latest.regime; // RANGE, TREND, FUSE
+      const reg = latest.regime; // RANGE, TREND, FUSE, CHAOS
       const isRange = reg === 'RANGE';
 
       // Banner
