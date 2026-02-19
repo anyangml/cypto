@@ -106,7 +106,32 @@ class BacktestEngine:
             if bar_idx < warmup_bars:
                 continue
 
-            # A. 订单撮合（tick-by-tick，模拟价格路径逐层击穿网格）
+            # A. 记录当前 K 线生效的网格计划（Fix: 必须在撮合前记录，否则会记录下根 K 线的新网格）
+            # Fix 2: 必须合并 self.orders 中可能存在的"持久化卖单"。
+            display_plan = None
+            
+            if self._active_grid_plan:
+                display_plan = self._active_grid_plan.copy()
+            
+            # Removed fallback dummy plan creation to ensure debuggability.
+            # If trades happen without an active grid plan, it indicates a logic error
+            # (e.g. orders persisted but plan lost) that should be visible as missing grid lines.
+
+            if display_plan:
+                # 覆盖为真实的挂单列表
+                # Fix: 对订单进行排序，确保 UI 渲染时 B1/S1 总是最靠近当前价格的那一档
+                buys = [o for o in self.orders if o["side"] == "buy"]
+                sells = [o for o in self.orders if o["side"] == "sell"]
+                
+                # 买单：价格从高到低 (靠近中轴的为 B1)
+                display_plan["buy_orders"] = sorted(buys, key=lambda x: x["price"], reverse=True)
+                
+                # 卖单：价格从低到高 (靠近中轴的为 S1)
+                display_plan["sell_orders"] = sorted(sells, key=lambda x: x["price"])
+            
+            self.grid_history[int(bar.timestamp)] = display_plan
+
+            # B. 订单撮合（tick-by-tick，模拟价格路径逐层击穿网格）
             self._match_with_ticks(ticks)
 
             # B. 策略逻辑（在收线后执行，与 Live WebSocket is_closed=True 对齐）
@@ -168,6 +193,7 @@ class BacktestEngine:
         for tick in ticks[1:]:
             curr_price = tick.price
             ts         = tick.timestamp
+            ts_bar     = tick.bar_timestamp
 
             if curr_price < prev_price:
                 # 价格下行 → 成交区间 [curr_price, prev_price] 内的买单（从高到低）
@@ -178,7 +204,7 @@ class BacktestEngine:
                     and curr_price <= o["price"] <= prev_price
                 ]
                 for order in sorted(candidates, key=lambda x: -x["price"]):
-                    if self._execute_trade(order, ts):
+                    if self._execute_trade(order, ts, ts_bar):
                         executed_ids.add(order["id"])
 
             elif curr_price > prev_price:
@@ -190,7 +216,7 @@ class BacktestEngine:
                     and prev_price <= o["price"] <= curr_price
                 ]
                 for order in sorted(candidates, key=lambda x: x["price"]):
-                    if self._execute_trade(order, ts):
+                    if self._execute_trade(order, ts, ts_bar):
                         executed_ids.add(order["id"])
 
             prev_price = curr_price
@@ -242,50 +268,75 @@ class BacktestEngine:
                     should_reset = True
 
             # 风控：仓位比例为 0 时强制清空
-            # 风控：仓位比例为 0 时强制清空
             if regime_res.position_ratio <= 0:
                 self.orders.clear()
                 self.last_grid_mid = None
                 self._active_grid_plan = None
             
-            elif should_reset:
-                # 实现“卖单持久化”逻辑：
-                # 如果开启，重置时仅删除买单，保留卖单（代表已买入头寸的离场单）
-                if self.strategy_cfg.risk_control.keep_persistent_orders:
-                    self.orders = [o for o in self.orders if o["side"] == "sell"]
-                    logger.debug("网格重置：保留现有 %d 笔卖单", len(self.orders))
-                else:
-                    self.orders.clear()
-
-                total_equity = self.balance_usdt + self.balance_btc * current_price
-                calc_window  = df.iloc[max(0, bar_idx - 300): bar_idx + 1]
+            else:
+                # 补充触发条件：如果有持仓但无卖单（说明刚买入，需要立即挂出卖单）
+                has_btc_position = (self.balance_btc * current_price) > self._min_order_value
+                has_no_sell_orders = not any(o["side"] == "sell" for o in self.orders)
                 
-                try:
-                    grid_plan    = self.ge.calculate_grid(
-                        calc_window,
-                        total_balance=total_equity,
-                        position_ratio=regime_res.position_ratio,
-                    )
-                    self.last_grid_mid = grid_plan["mid_price"]
-                    self._active_grid_plan = grid_plan
-                    self._place_orders(grid_plan, current_price)
-                except ValueError as e:
-                    # 数据不足或指标不可用，跳过本次网格计算
-                    logger.debug("网格计划生成失败(数据不足或指标不可用): %s，跳过本轮", e)
-                    # 保持现有网格计划不变，不重置
-                    pass
+                if has_btc_position and has_no_sell_orders:
+                    should_reset = True
+                    logger.debug("触发补单重置: 持仓 %.6f BTC 但无卖单", self.balance_btc)
 
-        # 记录每根 K 线时刻的活跃网格计划（用于前端回溯显示）
-        # 即使是 None 也要记录，显式告诉前端“此处无网格”，防止回溯到更早的过期网格
-        ts = int(bar.timestamp)
-        self.grid_history[ts] = self._active_grid_plan
+                if should_reset:
+                    # 实现“卖单持久化”逻辑：
+                    # 如果开启，重置时仅删除买单，保留卖单（代表已买入头寸的离场单）
+                    if self.strategy_cfg.risk_control.keep_persistent_orders:
+                        self.orders = [o for o in self.orders if o["side"] == "sell"]
+                        logger.debug("网格重置：保留现有 %d 笔卖单", len(self.orders))
+                    else:
+                        self.orders.clear()
+
+                    total_equity = self.balance_usdt + self.balance_btc * current_price
+                    calc_window  = df.iloc[max(0, bar_idx - 300): bar_idx + 1]
+                    
+                    try:
+                        grid_plan    = self.ge.calculate_grid(
+                            calc_window,
+                            total_balance=total_equity,
+                            position_ratio=regime_res.position_ratio,
+                        )
+                        self.last_grid_mid = grid_plan["mid_price"]
+                        self._active_grid_plan = grid_plan
+                        self._place_orders(grid_plan, current_price)
+                    except ValueError as e:
+                        # 数据不足或指标不可用，跳过本次网格计算
+                        logger.debug("网格计划生成失败(数据不足或指标不可用): %s，跳过本轮", e)
+                        # 保持现有网格计划不变，不重置
+                        # Fix: 显式确认 _active_grid_plan 延续上一轮的值，
+                        # 避免出现 orders 还在但 plan 却莫名其妙断档的情况。
+                        if self._active_grid_plan is None and self.orders:
+                                logger.warning("逻辑异常：持有挂单但无网格计划，且新网格计算失败。")
+                        pass
+
+        return
 
     # ------------------------------------------------------------------
     # 交易执行
     # ------------------------------------------------------------------
 
-    def _execute_trade(self, order: Dict, ts: int) -> bool:
+    def _execute_trade(self, order: Dict, ts: int, ts_bar: int) -> bool:
         """执行一笔交易，更新余额，记录快照（含持仓前后变化）。"""
+        
+        # --- Debug: 检查该交易发生时是否有对应的网格计划 ---
+        # 如果 self.grid_history[ts_bar] 为 None，说明 UI 上这根 K 线没有网格，
+        # 但我们却成交了单子，这就是用户反馈的"有交易无网格" Bug。
+        current_grid = self.grid_history.get(ts_bar)
+        if current_grid is None:
+            logger.error(
+                "逻辑一致性错误: 交易发生于 %s (Bar %s)，但该时刻无网格计划！\n"
+                "  Trade: %s %s @ %s\n"
+                "  Active Orders: %d",
+                pd.to_datetime(ts, unit='s'),
+                pd.to_datetime(ts_bar, unit='s'),
+                order["side"], order["qty"], order["price"],
+                len(self.orders)
+            )
+
         price = order["price"]
         qty   = order["qty"]
         cost  = price * qty
@@ -321,6 +372,8 @@ class BacktestEngine:
             # 持仓变化量
             "delta_usdt": round(self.balance_usdt - pre_usdt, 4),
             "delta_btc":  round(self.balance_btc  - pre_btc,  6),
+            # 记录所属 K 线时间，方便前端定位
+            "bar_time":   ts_bar,  
         })
         return True
 
