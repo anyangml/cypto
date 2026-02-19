@@ -190,6 +190,7 @@ class RegimeFilter:
             self.tiers = sorted(self.tiers, key=lambda t: t.hurst_max)
             
             # 轻量校验：确保 hurst_max 单调递增、position_ratio 在 [0, 1] 范围内
+            # prev_max 初始化为负无穷，确保第一个 tier 的任意非负 hurst_max 都能通过比较
             prev_max = -float('inf')
             for i, tier in enumerate(self.tiers):
                 if tier.hurst_max <= prev_max:

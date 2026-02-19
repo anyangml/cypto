@@ -71,7 +71,7 @@ class TestRegimeFilterTiersSorting:
             assert result.accumulate_spot is False
 
     def test_tier_validation_duplicate_hurst_max(self):
-        """测试：重复的 hurst_max 应该通过排序后校验失败"""
+        """测试：重复的 hurst_max 应该在排序后因不满足严格单调递增而校验失败"""
         tiers = [
             TierConfig(hurst_max=0.50, position_ratio=1.0, accumulate_spot=False),
             TierConfig(hurst_max=0.50, position_ratio=0.5, accumulate_spot=False),
@@ -222,7 +222,8 @@ class TestGridEngineDataValidation:
         ge = GridEngine()
         
         # 创建数据，前半部分有效，后半部分有几个 NaN
-        close_values = [100.0] * 200 + [np.nan, 100.0, 100.0] + [100.0] * 97
+        # 总长度 300 = 前 200 有效 + 1 个 NaN + 2 个有效 + (300-200-3) 个有效
+        close_values = [100.0] * 200 + [np.nan, 100.0, 100.0] + [100.0] * (300 - 200 - 3)
         df = pd.DataFrame({
             'open': close_values,
             'high': [v + 1 if pd.notna(v) else np.nan for v in close_values],

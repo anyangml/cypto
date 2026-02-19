@@ -97,6 +97,8 @@ class GridEngine:
                 sell_grid_enabled bool
         """
         # 数据不足 hard guard：检查最小数据长度，覆盖所有需要的窗口
+        # ma200_slope_lookback 需要加上是因为计算斜率时需要回看额外的历史数据点
+        # 例如：计算 MA200[-1] 需要前 200 根 K 线，计算 MA200[-(lookback+1)] 则需要前 200+lookback 根
         min_required_length = max(
             self.config.ma_long_period,
             self.config.ma_mid_period,
