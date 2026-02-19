@@ -48,6 +48,11 @@ class GridStrategyExecutor:
         self.symbol = self.cfg.symbol
         self.timeframe = self.cfg.timeframe
 
+        # 最小挂单名义价值 (USDT)，来自策略配置；默认 5.0 防止 Binance 拒单
+        self._min_notional_value: float = getattr(
+            self.strategy_cfg, "min_order_value", 5.0
+        )
+
         # 上次同步成交记录的时间戳（秒）
         self._last_trade_sync_ts: float = 0.0
 
@@ -196,77 +201,159 @@ class GridStrategyExecutor:
     ):
         """
         智能订单同步 (Diffing)。
-
-        比较当前挂单与计划挂单，最小化撤单/补单操作。
+        比较当前挂单与计划挂单，进行最小化调整，并根据资金利用率动态计算下单量。
         """
-        # 从策略配置读取最小下单量，避免硬编码
-        min_qty = float(self.strategy_cfg.grid_engine.min_order_qty)
+        min_notional_value = self._min_notional_value
 
-        def price_key(p: float) -> float:
-            return round(float(p), 2)
+        # 1. 精度与 Key 处理
+        def price_key(p: float) -> str:
+            # 使用交易所精度规则处理价格 Key，避免浮点误差
+            return str(self.exchange.price_to_precision(self.symbol, p))
 
-        current_buys: Dict[float, dict] = {
-            price_key(o["price"]): o
-            for o in open_orders
-            if o["side"] == "buy"
-        }
-        current_sells: Dict[float, dict] = {
-            price_key(o["price"]): o
-            for o in open_orders
-            if o["side"] == "sell"
-        }
+        current_buys: Dict[str, dict] = {}
+        for o in open_orders:
+            if o["side"] == "buy":
+                current_buys[price_key(o["price"])] = o
 
-        plan_buy_orders: List[dict] = plan.get("buy_orders", [])
-        plan_sell_orders: List[dict] = plan.get("sell_orders", [])
-        plan_buy_prices = {price_key(p["price"]) for p in plan_buy_orders}
-        plan_sell_prices = {price_key(p["price"]) for p in plan_sell_orders}
+        current_sells: Dict[str, dict] = {}
+        for o in open_orders:
+            if o["side"] == "sell":
+                current_sells[price_key(o["price"])] = o
+
+        plan_buy_orders = plan.get("buy_orders", [])
+        plan_sell_orders = plan.get("sell_orders", [])
+        
+        # 预计算所有计划单的价格 Key
+        plan_buy_keys = {price_key(p["price"]) for p in plan_buy_orders}
+        plan_sell_keys = {price_key(p["price"]) for p in plan_sell_orders}
 
         logger.info(
-            "Diffing: 当前买单 %d vs 计划 %d | 当前卖单 %d vs 计划 %d",
-            len(current_buys), len(plan_buy_prices),
-            len(current_sells), len(plan_sell_prices),
+            "Diffing: 买单 %d(curr) vs %d(plan) | 卖单 %d(curr) vs %d(plan)",
+            len(current_buys), len(plan_buy_keys),
+            len(current_sells), len(plan_sell_keys),
         )
 
-        # 1. 撤销不再需要的订单
-        for p, order in current_buys.items():
-            if p not in plan_buy_prices:
-                logger.info("撤销多余买单: %.2f", p)
+        # 2. 撤销不再需要的订单
+        for p_key, order in current_buys.items():
+            if p_key not in plan_buy_keys:
+                logger.info("撤销多余买单: %s", p_key)
+                try: self.exchange.cancel_order(order["id"])
+                except Exception as e: logger.warning("撤单失败 %s: %s", p_key, e)
+
+        for p_key, order in current_sells.items():
+            if p_key not in plan_sell_keys:
+                logger.info("撤销多余卖单: %s", p_key)
+                try: self.exchange.cancel_order(order["id"])
+                except Exception as e: logger.warning("撤单失败 %s: %s", p_key, e)
+
+        # 3. 计算资金分配 (Capital Allocation)
+        # 获取当前可用余额
+        balance = self.exchange.fetch_balance()
+        usdt_available = balance.get("USDT", 0.0)
+        btc_available = balance.get("BTC", 0.0)
+        
+        # 资金利用率 (由 Regime/GridEngine 决定)
+        utilization = plan.get("capital_utilization", 1.0)
+        # 目标挂单总金额 = 当前余额 * 利用率
+        # 注意：这里的余额包含已挂单资金吗？fetch_balance 通常返回 total=free+used
+        # 如果是 Diffing 模式，已挂单资金已经在 used 中。
+        # 简单起见，我们计算每格应该分配多少，然后挂新单
+        
+        # 估算总权益用于计算每格资金
+        # (Total USDT + BTC Value) * Utilization / Total Grids
+        # 这里简化为：将 可用(Free) 资金分配给 新增(Missing) 订单
+        
+        # 统计缺失的订单数
+        missing_buys = [p for p in plan_buy_orders if price_key(p["price"]) not in current_buys]
+        missing_sells = [p for p in plan_sell_orders if price_key(p["price"]) not in current_sells]
+        
+        # 如果没有缺失，直接返回
+        if not missing_buys and not missing_sells:
+            return
+
+        # 资金分配策略：
+        # 将 *当前可用余额* 均分给 *缺失的订单*
+        # 这是一种保守策略，确保有钱挂单
+        # 如果 utilization 很低，我们应该只用部分可用余额
+        
+        # 修正：我们需要考虑到 "Total Target Investment"
+        # 但 Diffing 比较复杂。简单的做法：
+        # Use (Available Balance * Utilization) / (Missing Orders Count + Safety Buffer)
+        
+        # 挂买单 (USDT)
+        if missing_buys:
+            # 这里的可用余额是 Free Balance
+            # 假设我们只用 Free Balance 的一部分
+            # 如果 utilization=1.0, 用所有 Free? 是的。
+            # 安全系数 0.98 防止精度问题
+            budget = usdt_available * utilization * 0.98
+            amount_per_order_usdt = budget / len(missing_buys)
+            
+            if amount_per_order_usdt < min_notional_value:
+                logger.warning(f"资金不足，无法补齐所有买单 (PerOrder {amount_per_order_usdt:.2f} < 5.0)")
+                # 尝试挂一部分? 或者跳过
+                sorted_buys = sorted(missing_buys, key=lambda x: x['price'], reverse=True) # 优先挂靠近现价的
+                # 重新计算能挂几个
+                num_can_afford = int(budget // min_notional_value)
+                missing_buys = sorted_buys[:num_can_afford]
+                if missing_buys:
+                    amount_per_order_usdt = budget / len(missing_buys)
+            
+            for item in missing_buys:
+                price = item["price"]
+                # 再次检查价格逻辑 (买单 < 现价)
+                if float(price) >= current_price: continue
+                
+                qty = amount_per_order_usdt / float(price)
+                
+                # 精度修正
+                final_qty = self.exchange.amount_to_precision(self.symbol, qty)
+                final_price = self.exchange.price_to_precision(self.symbol, float(price))
+                
+                # 最小下单量检查 (qty * price >= 5)
+                if final_qty * float(final_price) < min_notional_value:
+                    continue
+                    
                 try:
-                    self.exchange.cancel_order(order["id"])
+                    self.exchange.create_limit_order("buy", final_price, final_qty)
+                    time.sleep(0.1)
                 except Exception as e:
-                    logger.warning("撤销买单失败 %.2f: %s", p, e)
+                    logger.error("补挂买单失败 %s: %s", final_price, e)
 
-        for p, order in current_sells.items():
-            if p not in plan_sell_prices:
-                logger.info("撤销多余卖单: %.2f", p)
+        # 挂卖单 (BTC)
+        if missing_sells:
+            budget_btc = btc_available * utilization * 0.98
+            qty_per_order = budget_btc / len(missing_sells)
+            
+            # 检查最小名义价值
+            # 估算 value = qty * price
+            # 如果 qty 太小导致 value < 5，则减少挂单数
+            # 取第一笔卖单价格估算
+            est_price = float(missing_sells[0]["price"])
+            if qty_per_order * est_price < min_notional_value:
+                # 削减订单
+                min_btc_req = min_notional_value / est_price
+                num_can_afford = int(budget_btc // min_btc_req)
+                sorted_sells = sorted(missing_sells, key=lambda x: x['price']) # 优先挂靠近现价的 (低价)
+                missing_sells = sorted_sells[:num_can_afford]
+                if missing_sells:
+                    qty_per_order = budget_btc / len(missing_sells)
+            
+            for item in missing_sells:
+                price = item["price"]
+                if float(price) <= current_price: continue
+
+                final_qty = self.exchange.amount_to_precision(self.symbol, qty_per_order)
+                final_price = self.exchange.price_to_precision(self.symbol, float(price))
+
+                if final_qty * float(final_price) < min_notional_value:
+                    continue
+                    
                 try:
-                    self.exchange.cancel_order(order["id"])
+                    self.exchange.create_limit_order("sell", final_price, final_qty)
+                    time.sleep(0.1)
                 except Exception as e:
-                    logger.warning("撤销卖单失败 %.2f: %s", p, e)
-
-        # 2. 补挂缺失的订单
-        buy_enabled = plan.get("buy_grid_enabled", True)
-        sell_enabled = plan.get("sell_grid_enabled", True)
-
-        if buy_enabled:
-            for item in plan_buy_orders:
-                p_key = price_key(item["price"])
-                if p_key not in current_buys and float(item["price"]) < current_price:
-                    try:
-                        self.exchange.create_limit_order("buy", float(item["price"]), min_qty)
-                        time.sleep(0.1)
-                    except Exception as e:
-                        logger.error("补挂买单失败 %.2f: %s", item["price"], e)
-
-        if sell_enabled:
-            for item in plan_sell_orders:
-                p_key = price_key(item["price"])
-                if p_key not in current_sells and float(item["price"]) > current_price:
-                    try:
-                        self.exchange.create_limit_order("sell", float(item["price"]), min_qty)
-                        time.sleep(0.1)
-                    except Exception as e:
-                        logger.error("补挂卖单失败 %.2f: %s", item["price"], e)
+                    logger.error("补挂卖单失败 %s: %s", final_price, e)
 
 
 if __name__ == "__main__":

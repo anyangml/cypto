@@ -7,7 +7,9 @@ exchange.py - 交易所连接层
 
 from __future__ import annotations
 
+import math
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 
 import ccxt
@@ -17,6 +19,35 @@ from src.config import Config
 from src.logger import setup_logger
 
 logger = setup_logger("exchange")
+
+# ------------------------------------------------------------------
+# 模块级工具：timeframe → 毫秒
+# 置于类外，方便 api.py / backtest.py 等其他模块直接 import
+# ------------------------------------------------------------------
+
+_TIMEFRAME_MS: dict[str, int] = {
+    "1s":  1_000,
+    "1m":  60_000,
+    "3m":  180_000,
+    "5m":  300_000,
+    "15m": 900_000,
+    "30m": 1_800_000,
+    "1h":  3_600_000,
+    "2h":  7_200_000,
+    "4h":  14_400_000,
+    "6h":  21_600_000,
+    "8h":  28_800_000,
+    "12h": 43_200_000,
+    "1d":  86_400_000,
+    "3d":  259_200_000,
+    "1w":  604_800_000,
+}
+
+
+def timeframe_to_ms(timeframe: str) -> int:
+    """返回 K 线周期对应的毫秒数；未知 timeframe 返回 60_000（1 分钟）。"""
+    return _TIMEFRAME_MS.get(timeframe, 60_000)
+
 
 # Binance Testnet 的 REST API 地址
 _TESTNET_URLS = {
@@ -148,59 +179,69 @@ class ExchangeClient:
         since_days: int = 30,
         since_ms: Optional[int] = None,
         limit: int = 1000,
+        max_workers: int = 8,
     ) -> pd.DataFrame:
         """
-        获取历史 K 线数据 (OHLCV)。
+        获取历史 K 线数据 (OHLCV) — 并发分页版。
+
+        顺序分页（旧版）对 1m/30天需要 43 次串行请求（约 60s）。
+        本实现预先计算所有分片的起始时间戳，并用 ThreadPoolExecutor
+        同时发出多个请求，速度随分片数近似线性提升。
 
         Args:
-            symbol:     交易对，默认使用 Config 中的配置。
-            timeframe:  K 线周期，默认使用 Config 中的配置。
-            since_days: 获取过去多少天的数据（若未指定 since_ms）。
-            since_ms:   确定的起始时间戳（毫秒），若指定则忽略 since_days。
-            limit:      单次请求最大条数（Binance 上限 1000）。
+            symbol:      交易对，默认使用 Config 中的配置。
+            timeframe:   K 线周期，默认使用 Config 中的配置。
+            since_days:  获取过去多少天的数据（若未指定 since_ms）。
+            since_ms:    确定的起始时间戳（毫秒），若指定则忽略 since_days。
+            limit:       单次请求最大条数（Binance 上限 1000）。
+            max_workers: 并发线程数上限（默认 8，受 Binance Rate Limit 影响）。
 
         Returns:
-            包含 [timestamp, open, high, low, close, volume] 列 a DataFrame，
-            timestamp 列已转换为 UTC datetime 类型并设为索引。
+            包含 [open, high, low, close, volume] 列的 DataFrame，
+            index 为 UTC datetime，按时间升序排列。
         """
-        symbol = symbol or self._config.symbol
+        symbol    = symbol    or self._config.symbol
         timeframe = timeframe or self._config.timeframe
+        tf_ms     = timeframe_to_ms(timeframe)
 
-        # 计算起始时间戳（或者使用传入的 since_ms）
         if since_ms is None:
             since_ms = int(
                 (pd.Timestamp.now("UTC") - pd.Timedelta(days=since_days)).timestamp() * 1000
             )
 
+        now_ms        = int(pd.Timestamp.now("UTC").timestamp() * 1000)
+        total_candles = math.ceil((now_ms - since_ms) / tf_ms)
+        total_pages   = max(1, math.ceil(total_candles / limit))
+        workers       = min(max_workers, total_pages)
+
         logger.info(
-            "开始获取 K 线数据 | 交易对: %s | 周期: %s | 起始时间戳: %s",
-            symbol,
-            timeframe,
-            since_ms,
+            "开始获取 K 线 | %s %s | 预估 %d 根 → %d 分片 | 并发 %d 线程",
+            symbol, timeframe, total_candles, total_pages, workers,
         )
 
-        all_candles: list = []
-        current_since = since_ms
+        # 各分片的起始时间戳（基于均匀分片，最后一片会被截断）
+        page_starts = [since_ms + i * limit * tf_ms for i in range(total_pages)]
 
-        while True:
-            candles = self._safe_call(
+        def _fetch_page(page_since: int) -> list:
+            return self._safe_call(
                 self._exchange.fetch_ohlcv,
-                symbol,
-                timeframe,
-                since=current_since,
+                symbol, timeframe,
+                since=page_since,
                 limit=limit,
-            )
-            if not candles:
-                break
+            ) or []
 
-            all_candles.extend(candles)
+        all_candles: list = []
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = {pool.submit(_fetch_page, ts): ts for ts in page_starts}
+            for fut in as_completed(futures):
+                try:
+                    all_candles.extend(fut.result())
+                except Exception as exc:
+                    logger.warning("分片拉取失败 (since=%d): %s", futures[fut], exc)
 
-            # 若返回数量小于 limit，说明已到达最新数据
-            if len(candles) < limit:
-                break
-
-            # 移动时间窗口，避免重复获取
-            current_since = candles[-1][0] + 1
+        if not all_candles:
+            logger.warning("未获取到任何 K 线数据")
+            return pd.DataFrame(columns=["open", "high", "low", "close", "volume"])
 
         df = pd.DataFrame(
             all_candles,
@@ -209,18 +250,19 @@ class ExchangeClient:
         df["timestamp"] = pd.to_datetime(df["timestamp"], unit="ms", utc=True)
         df.set_index("timestamp", inplace=True)
         df = df.astype(float)
-
-        # 去重（分页请求可能产生重复）
         df = df[~df.index.duplicated(keep="last")]
         df.sort_index(inplace=True)
+        # 截掉未来数据（均匀分片可能多生成最后几根空白分片）
+        df = df[df.index <= pd.Timestamp.now("UTC")]
 
         logger.info(
-            "K 线数据获取完成 | 共 %d 条 | 时间范围: %s ~ %s",
+            "K 线获取完成 | %d 根 | %s ~ %s",
             len(df),
-            df.index[0].strftime("%Y-%m-%d"),
-            df.index[-1].strftime("%Y-%m-%d"),
+            df.index[0].strftime("%Y-%m-%d %H:%M"),
+            df.index[-1].strftime("%Y-%m-%d %H:%M"),
         )
         return df
+
 
     def save_ohlcv_to_csv(self, df: pd.DataFrame, filepath: str) -> None:
         """

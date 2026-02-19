@@ -739,6 +739,8 @@
 
         <span class="hdr-label">Timeframe</span>
         <select id="sel-timeframe">
+          <option value="1m">1m</option>
+          <option value="5m">5m</option>
           <option value="15m">15m</option>
           <option value="1h" selected>1h</option>
           <option value="4h">4h</option>
@@ -746,7 +748,7 @@
         </select>
 
         <span class="hdr-label">History</span>
-        <input class="hdr-input" id="inp-days" type="number" value="90" min="7" max="365" style="width:60px" />
+        <input class="hdr-input" id="inp-days" type="number" value="30" min="7" max="365" style="width:60px" />
         <span class="hdr-label">days</span>
 
         <div class="status-badge">
@@ -841,6 +843,11 @@
             <div class="metric-value" id="val-hurst">—</div>
             <span class="metric-vote" id="vote-hurst">—</span>
           </div>
+          <div class="metric-card" id="card-ma200">
+            <div class="metric-name">MA200 Slope</div>
+            <div class="metric-value" id="val-ma200">—</div>
+            <span class="metric-vote" id="vote-ma200">—</span>
+          </div>
         </div>
 
         <div class="pos-ratio-badge">
@@ -848,8 +855,14 @@
             <div style="font-size:10px;color:var(--text-2);margin-bottom:2px">POS RECOMMENDATION</div>
             <div class="pos-ratio-value" id="val-pos-ratio">0%</div>
           </div>
+          <div style="text-align:center">
+            <div style="font-size:10px;color:var(--text-2);margin-bottom:2px">ACTIVE CAPITAL</div>
+            <div class="pos-ratio-value" id="val-active-cap" style="color:#00d4ff">$0</div>
+          </div>
           <div style="text-align:right">
             <span class="spot-accum-badge" id="badge-spot-accum">PROFIT TO BTC</span>
+            <span class="spot-accum-badge" id="badge-downtrend"
+              style="background:#e74c3c; display:none; margin-top:4px;">PROTECTION: BEAR MARKET</span>
           </div>
         </div>
 
@@ -948,10 +961,27 @@
         </div>
 
         <div class="param-section">
-          <div class="param-section-title">Voting</div>
+          <div class="param-section-title">MA200 Trend Filter</div>
+          <div class="param-row">
+            <span class="param-label">Period</span>
+            <input class="param-input" id="p-ma200-period" type="number" value="200" min="20" max="500" />
+          </div>
+          <div class="param-row">
+            <span class="param-label">Slope Lookback</span>
+            <input class="param-input" id="p-ma200-lookback" type="number" value="10" min="1" max="50" />
+          </div>
+          <div class="param-row">
+            <span class="param-label">Slope Threshold</span>
+            <input class="param-input" id="p-ma200-threshold" type="number" value="0.0" min="-0.1" max="0.1"
+              step="0.0001" />
+          </div>
+        </div>
+
+        <div class="param-section">
+          <div class="param-section-title">Voting System</div>
           <div class="param-row">
             <span class="param-label">Trend Vote Threshold</span>
-            <input class="param-input" id="p-vote-threshold" type="number" value="2" min="1" max="4" />
+            <input class="param-input" id="p-vote-threshold" type="number" value="3" min="1" max="5" />
           </div>
         </div>
 
@@ -976,10 +1006,12 @@
           <table style="width:100%; border-collapse:collapse; font-size:10px;">
             <thead style="position:sticky; top:0; background:var(--bg-2);">
               <tr style="color:var(--text-2); text-align:left;">
-                <th style="padding:6px;">Time</th>
-                <th style="padding:6px;">Side</th>
-                <th style="padding:6px;">Price</th>
-                <th style="padding:6px;text-align:right">Qty</th>
+                <th style="padding:5px 4px;">Time</th>
+                <th style="padding:5px 4px;">Side</th>
+                <th style="padding:5px 4px;">Price</th>
+                <th style="padding:5px 4px;text-align:right">Qty</th>
+                <th style="padding:5px 4px;text-align:right;color:#00d4ff">USDT</th>
+                <th style="padding:5px 4px;text-align:right;color:#f39c12">BTC</th>
               </tr>
             </thead>
             <tbody id="history-table-body">
@@ -1003,13 +1035,15 @@
     let seriesMarkers = [];
     let gridLines = [];
     let lastGridPlan = null;
+    let lastBacktestResult = null;
 
     const DEFAULTS = {
       adx_period: 14, adx_trend_threshold: 25.0, adx_fuse_threshold: 30.0,
       atr_short_period: 7, atr_long_period: 28, atr_ratio_threshold: 1.5,
       bb_period: 20, bb_std: 2.0, bb_width_threshold: 0.1,
       hurst_period: 100, hurst_threshold: 0.5, hurst_fuse_threshold: 0.6, hurst_extreme_low: 0.35,
-      trend_vote_threshold: 2,
+      ma200_period: 200, ma200_slope_lookback: 10, ma200_slope_threshold: 0.0,
+      trend_vote_threshold: 3,
     };
 
     let autoTimer = null;
@@ -1074,12 +1108,17 @@
         document.getElementById('chk-auto').checked = false;
         toggleAuto();
       }
+
+      if (document.getElementById('tab-history').classList.contains('active')) {
+        loadHistory();
+      }
     }
 
     // ── Tab switch ────────────────────────────────────────────────────
     function switchTab(tab) {
+      const tabNames = ['metrics', 'params', 'history'];
       document.querySelectorAll('.tab-btn').forEach((b, i) => {
-        b.classList.toggle('active', ['metrics', 'params'][i] === tab);
+        b.classList.toggle('active', tabNames[i] === tab);
       });
       document.querySelectorAll('.tab-pane').forEach(p => p.classList.remove('active'));
       document.getElementById('tab-' + tab).classList.add('active');
@@ -1090,34 +1129,124 @@
     }
 
     async function loadHistory() {
-      try {
-        // Trades
-        const resTrades = await fetch('/api/history/trades?limit=50').then(r => r.json());
-        const tbody = document.getElementById('history-table-body');
-        tbody.innerHTML = '';
+      const tbody = document.getElementById('history-table-body');
+      tbody.innerHTML = '';
 
-        resTrades.forEach(t => {
+      // Clear stats placeholders
+      document.getElementById('h-total-trades').innerText = '-';
+      document.getElementById('h-total-vol').innerText = '-';
+
+      try {
+        let trades = [];
+        let stats = { total_trades: 0, total_volume: 0 };
+
+        if (currentMode === 'backtest') {
+          if (lastBacktestResult) {
+            trades = lastBacktestResult.trades.slice().reverse(); // Show newest first
+            stats.total_trades = lastBacktestResult.metrics.trade_count;
+            // Calculate volume roughly (quote_qty is usually cost)
+            stats.total_volume = trades.reduce((acc, t) => acc + (t.quote_qty || (t.price * t.qty)), 0);
+          }
+        } else {
+          // LIVE mode - fetch from API
+          trades = await fetch('/api/history/trades?limit=50').then(r => r.json());
+          stats = await fetch('/api/history/stats').then(r => r.json());
+        }
+
+        trades.forEach(t => {
           const tr = document.createElement('tr');
           const isBuy = t.side.toLowerCase() === 'buy';
-          const timeStr = new Date(t.timestamp).toLocaleTimeString();
+          let timeStr = 'N/A';
+          try {
+            // Handle both seconds (backtest) and ms/ISO (db)
+            let ts = t.time || t.timestamp;
+            if (typeof ts === 'number' && ts < 10000000000) ts *= 1000;
+            const d = new Date(ts);
+            // Show MM-DD HH:mm:ss
+            const m = (d.getMonth() + 1).toString().padStart(2, '0');
+            const day = d.getDate().toString().padStart(2, '0');
+            const h = d.getHours().toString().padStart(2, '0');
+            const min = d.getMinutes().toString().padStart(2, '0');
+            const s = d.getSeconds().toString().padStart(2, '0');
+            timeStr = `${m}-${day} ${h}:${min}:${s}`;
+          } catch (e) { }
+
           const color = isBuy ? '#00e676' : '#ff4d6d';
 
+          let ts_sec = t.time || t.timestamp;
+          if (typeof ts_sec === 'number' && ts_sec > 10000000000) ts_sec /= 1000;
+          ts_sec = Math.floor(ts_sec);
+
+          // ── 持仓列辅助函数
+          function fmtBalance(val, decimals) {
+            if (val == null) return '<span style="color:var(--text-3)">—</span>';
+            return parseFloat(val).toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+          }
+          function fmtDelta(val, decimals, unit) {
+            if (val == null) return '';
+            const n = parseFloat(val);
+            const sign = n >= 0 ? '+' : '';
+            const col = n >= 0 ? '#00e676' : '#ff4d6d';
+            const str = n.toLocaleString(undefined, { minimumFractionDigits: decimals, maximumFractionDigits: decimals });
+            return `<span style="color:${col};font-size:9px">${sign}${str}</span>`;
+          }
+
+          const hasPos = t.pre_usdt != null;
+          const usdtCell = hasPos
+            ? `<div style="font-size:9px;color:var(--text-2)">${fmtBalance(t.pre_usdt, 2)}</div><div>${fmtDelta(t.delta_usdt, 2, 'U')}</div>`
+            : '<span style="color:var(--text-3)">—</span>';
+          const btcCell = hasPos
+            ? `<div style="font-size:9px;color:var(--text-2)">${fmtBalance(t.pre_btc, 4)}</div><div>${fmtDelta(t.delta_btc, 4, 'B')}</div>`
+            : '<span style="color:var(--text-3)">—</span>';
+
           tr.innerHTML = `
-                  <td style="padding:6px;color:var(--text-2)">${timeStr}</td>
-                  <td style="padding:6px;color:${color};font-weight:600">${t.side.toUpperCase()}</td>
-                  <td style="padding:6px;">${parseFloat(t.price).toFixed(2)}</td>
-                  <td style="padding:6px;text-align:right">${parseFloat(t.qty).toFixed(4)}</td>
+                  <td style="padding:5px 4px;color:var(--text-2)">${timeStr}</td>
+                  <td style="padding:5px 4px;color:${color};font-weight:600">${t.side.toUpperCase()}</td>
+                  <td style="padding:5px 4px;">${parseFloat(t.price).toFixed(2)}</td>
+                  <td style="padding:5px 4px;text-align:right">${parseFloat(t.qty).toFixed(4)}</td>
+                  <td style="padding:5px 4px;text-align:right;line-height:1.3">${usdtCell}</td>
+                  <td style="padding:5px 4px;text-align:right;line-height:1.3">${btcCell}</td>
                 `;
+
+          // Click to highlight/deselect trade on chart
+          tr.style.cursor = 'pointer';
+          const tradeKey = `${ts_sec}_${parseFloat(t.price).toFixed(2)}_${t.side}`;
+          tr.dataset.tradeKey = tradeKey;
+
+          let _clickTimer = null;
+          tr.onclick = function () {
+            // 防止快速双击触发两次逻辑
+            if (_clickTimer) return;
+            _clickTimer = setTimeout(() => { _clickTimer = null; }, 300);
+
+            const allRows = document.querySelectorAll('#history-table-body tr');
+            const isAlreadySelected = this.dataset.selected === 'true';
+
+            // Clear all row highlights
+            allRows.forEach(r => { r.style.background = 'transparent'; r.dataset.selected = 'false'; });
+
+            if (isAlreadySelected) {
+              // Deselect: clear chart markers completely
+              candleSeries.setMarkers([]);
+              window.lastFocusedTrade = null;
+            } else {
+              // Select: highlight this row and show on chart
+              this.style.background = 'rgba(255, 215, 64, 0.15)';
+              this.dataset.selected = 'true';
+              focusTrade(ts_sec, t.side);
+            }
+          };
+
           tbody.appendChild(tr);
         });
 
         // Stats
-        const resStats = await fetch('/api/history/stats').then(r => r.json());
-        document.getElementById('h-total-trades').innerText = resStats.total_trades;
-        document.getElementById('h-total-vol').innerText = resStats.total_volume.toLocaleString();
+        document.getElementById('h-total-trades').innerText = stats.total_trades;
+        document.getElementById('h-total-vol').innerText = Math.round(stats.total_volume).toLocaleString();
 
       } catch (e) {
         console.error("Failed to load history", e);
+        tbody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:10px;color:var(--text-2)">Failed to load data</td></tr>`;
       }
     }
 
@@ -1137,6 +1266,9 @@
         hurst_threshold: parseFloat(document.getElementById('p-hurst-threshold').value),
         hurst_fuse_threshold: parseFloat(document.getElementById('p-hurst-fuse').value),
         hurst_extreme_low: parseFloat(document.getElementById('p-hurst-extreme').value),
+        ma200_period: parseInt(document.getElementById('p-ma200-period').value),
+        ma200_slope_lookback: parseInt(document.getElementById('p-ma200-lookback').value),
+        ma200_slope_threshold: parseFloat(document.getElementById('p-ma200-threshold').value),
         trend_vote_threshold: parseInt(document.getElementById('p-vote-threshold').value),
       };
     }
@@ -1155,6 +1287,9 @@
       document.getElementById('p-hurst-threshold').value = DEFAULTS.hurst_threshold;
       document.getElementById('p-hurst-fuse').value = DEFAULTS.hurst_fuse_threshold;
       document.getElementById('p-hurst-extreme').value = DEFAULTS.hurst_extreme_low;
+      document.getElementById('p-ma200-period').value = DEFAULTS.ma200_period;
+      document.getElementById('p-ma200-lookback').value = DEFAULTS.ma200_slope_lookback;
+      document.getElementById('p-ma200-threshold').value = DEFAULTS.ma200_slope_threshold;
       document.getElementById('p-vote-threshold').value = DEFAULTS.trend_vote_threshold;
     }
 
@@ -1232,6 +1367,12 @@
       spotBadge.classList.toggle('active', latest.accumulate_spot);
       spotBadge.textContent = latest.accumulate_spot ? 'SPOT ACCUM: ON' : 'SPOT ACCUM: OFF';
 
+      // Active Capital
+      if (lastGridPlan) {
+        const cap = lastGridPlan.active_capital || 0;
+        document.getElementById('val-active-cap').textContent = '$' + Math.round(cap).toLocaleString();
+      }
+
       // Individual metrics
       function setMetric(id, value, vote, label) {
         document.getElementById('val-' + id).textContent = value;
@@ -1245,36 +1386,21 @@
       setMetric('atr', latest.atr_ratio.toFixed(3), latest.atr_vote, 'ATR');
       setMetric('bb', latest.bb_width.toFixed(4), latest.bb_vote, 'BB');
       setMetric('hurst', latest.hurst_value.toFixed(3), latest.hurst_vote, 'Hurst');
+      setMetric('ma200', latest.ma200_slope.toFixed(5), latest.ma200_vote, 'MA200');
+
+      // Downtrend Protection Badge
+      const protBadge = document.getElementById('badge-downtrend');
+      if (protBadge) {
+        protBadge.style.display = lastGridPlan?.downtrend_protection ? 'inline-block' : 'none';
+      }
     }
 
     // ── Render regime background bands ───────────────────────────────
+    // renderRegimeBands: segments are shown via the timeline bar only.
+    // Regime markers are intentionally NOT rendered on the candle series
+    // to keep the chart clean (chart markers are reserved for selected trades).
     function renderRegimeBands(segments) {
-      if (!chart || !candleSeries) return;
-
-      // Use series markers as lightweight band approximation
-      // For proper bands we use background rectangles via primitives
-      // Lightweight Charts v4 supports series markers; we'll use background color bands
-      // by adding rectangle primitives
-      const primitives = segments.map(seg => ({
-        time: seg.start_time,
-        endTime: seg.end_time,
-        color: seg.regime === 'RANGE'
-          ? 'rgba(0,230,118,0.07)'
-          : 'rgba(255,77,109,0.07)',
-      }));
-
-      // Apply as background series (area series trick)
-      // We'll use ISeriesPrimitive approach via markers for simplicity
-      const markers = segments.map(seg => ({
-        time: seg.start_time,
-        position: 'aboveBar',
-        color: seg.regime === 'RANGE' ? '#00e676' : '#ff4d6d',
-        shape: 'circle',
-        size: 0.3,
-        text: seg.regime === 'RANGE' ? '●' : '▲',
-      }));
-
-      candleSeries.setMarkers(markers);
+      // no-op for chart: timeline bar below handles regime visualization
     }
 
     // ── Render timeline bar ───────────────────────────────────────────
@@ -1335,6 +1461,7 @@
         }
 
         const data = await res.json();
+        if (data.mode === 'backtest') lastBacktestResult = data.backtest;
 
         // Hide empty state
         document.getElementById('empty-state').style.display = 'none';
@@ -1393,41 +1520,6 @@
       // 1. 显示 Metrics
       const stats = bt.metrics;
       const metricsDiv = document.getElementById('backtest-metrics');
-      metricsDiv.style.display = 'flex';
-      document.getElementById('m-bt-stats').innerHTML = `
-            Return: <span style="color:${stats.total_return_pct >= 0 ? '#00b894' : '#ff7675'}">${stats.total_return_pct}%</span><br>
-            MaxDD: <span style="color:#ff7675">${stats.max_drawdown_pct}%</span> | Trades: ${stats.trade_count}
-        `;
-
-      // 2. 在主图绘制买卖标记 (Markers)
-      // 过滤掉不在当前可见范围内太多的点以免卡顿 (Lightweight Charts 处理能力很强，通常不用担心)
-      const markers = bt.trades.map(t => ({
-        time: t.time,
-        position: t.side === 'buy' ? 'belowBar' : 'aboveBar',
-        color: t.side === 'buy' ? '#00b894' : '#ff7675',
-        shape: t.side === 'buy' ? 'arrowUp' : 'arrowDown',
-        text: t.side.toUpperCase() + ' @ ' + t.price
-      }));
-      candleSeries.setMarkers(markers);
-
-      // 3. 在副图绘制 PnL 曲线 (覆盖原有指标)
-      const pnlData = bt.equity_curve.map(p => ({
-        time: p.time,
-        value: p.value
-      }));
-
-      indicatorSeries.setData(pnlData);
-      indicatorSeries.applyOptions({
-        color: '#f39c12',
-        lineWidth: 2,
-        title: 'Equity (USDT)'
-      });
-    }
-
-    function renderBacktest(bt) {
-      // 1. 显示 Metrics
-      const stats = bt.metrics;
-      const metricsDiv = document.getElementById('backtest-metrics');
       if (metricsDiv) {
         metricsDiv.style.display = 'flex';
         document.getElementById('m-bt-stats').innerHTML = `
@@ -1440,23 +1532,40 @@
                 <div style="display:flex;justify-content:space-between">
                     <span>Trades:</span> <span>${stats.trade_count}</span>
                 </div>
+                <div style="border-top:1px solid var(--border);margin:6px 0 4px;"></div>
+                <div style="font-size:9px;color:var(--text-2);margin-bottom:4px;letter-spacing:.06em">FINAL HOLDINGS</div>
+                <div style="display:flex;justify-content:space-between">
+                    <span style="color:#00d4ff">USDT:</span>
+                    <span style="color:#00d4ff;font-family:var(--font-mono)">
+                        ${stats.final_usdt != null ? parseFloat(stats.final_usdt).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}
+                    </span>
+                </div>
+                <div style="display:flex;justify-content:space-between">
+                    <span style="color:#f39c12">BTC:</span>
+                    <span style="color:#f39c12;font-family:var(--font-mono)">
+                        ${stats.final_btc != null ? parseFloat(stats.final_btc).toFixed(6) : '—'}
+                    </span>
+                </div>
             `;
       }
 
-      // 2. 在主图绘制买卖标记 (Markers)
+      // 2. 缓存买卖标记 (only shown on demand when clicking History rows)
       if (candleSeries) {
-        const markers = bt.trades.map(t => ({
+        seriesMarkers = bt.trades.map(t => ({
           time: t.time,
           position: t.side === 'buy' ? 'belowBar' : 'aboveBar',
           color: t.side === 'buy' ? '#00e676' : '#ff4d6d',
           shape: t.side === 'buy' ? 'arrowUp' : 'arrowDown',
-          text: t.side.toUpperCase() + ' @ ' + t.price
-        }));
-        candleSeries.setMarkers(markers);
+          text: t.side.toUpperCase() + ' @ ' + parseFloat(t.price).toFixed(2)
+        })).sort((a, b) => a.time - b.time); // pre-sort is required
+        // Do NOT call setMarkers here — chart would be unreadable with 300+ markers.
+        // Markers are shown individually when clicking a trade row in History.
+        candleSeries.setMarkers([]); // clear any previous markers
+        window.lastFocusedTrade = null;
       }
 
       // 3. 在副图绘制 PnL 曲线
-      if (indicatorSeries) {
+      if (typeof indicatorSeries !== 'undefined' && indicatorSeries) {
         const pnlData = bt.equity_curve.map(p => ({
           time: p.time,
           value: p.value
@@ -1467,9 +1576,85 @@
           color: '#f39c12',
           lineWidth: 2,
           title: 'Equity (USDT)'
-          // 注意：这里没有还原原本的指标。如果用户切回其他 TAB 再切回来可能会乱。
-          // 暂时就这样，因为是 Demo 性质。
         });
+      }
+    }
+
+    function focusTrade(ts, side) {
+      try {
+        let timeSec = ts;
+        if (timeSec > 10000000000) timeSec = Math.floor(timeSec / 1000);
+
+        // --- Find EXACT candle time from seriesMarkers ---
+        // seriesMarkers was built from t.time values that came directly from
+        // the backtest dataframe index, so they are guaranteed to match chart candle times.
+        // We reuse the existing marker object's time to guarantee exact match with chart data.
+        let exactTime = null;  // null = not found
+        let bestMarker = null;
+        if (typeof seriesMarkers !== 'undefined' && Array.isArray(seriesMarkers) && seriesMarkers.length > 0) {
+          let bestDiff = Infinity;
+          for (const m of seriesMarkers) {
+            const diff = Math.abs(m.time - timeSec);
+            if (diff < bestDiff) {
+              bestDiff = diff;
+              bestMarker = m;
+            }
+          }
+          // Dynamic tolerance: 1.5× the selected timeframe interval
+          // so a 1m chart uses ≤90s, a 1h chart uses ≤5400s, etc.
+          const tfSecsMap = {
+            '1m': 60, '3m': 180, '5m': 300, '15m': 900, '30m': 1800,
+            '1h': 3600, '2h': 7200, '4h': 14400, '6h': 21600, '1d': 86400
+          };
+          const selTf = (document.getElementById('sel-timeframe') || {}).value || '1h';
+          const toleranceSec = (tfSecsMap[selTf] || 3600) * 1.5;
+          if (bestMarker && bestDiff <= toleranceSec) {
+            exactTime = bestMarker.time;
+          }
+        }
+
+        if (exactTime === null) {
+          console.warn(`focusTrade: could not find matching candle for ts=${timeSec}, side=${side}`);
+          return;
+        }
+
+        console.log(`focusTrade: raw=${timeSec}, exact=${exactTime}, side=${side}, diff=${exactTime - timeSec}s`);
+
+        // FIRST set the marker (before scrolling, so it appears immediately)
+        const isBuy = side && side.toLowerCase() === 'buy';
+        const highlightMarker = {
+          time: exactTime,
+          position: isBuy ? 'belowBar' : 'aboveBar',
+          color: '#ffd740',
+          shape: 'circle',
+          size: 3,
+          text: '★ ' + side.toUpperCase()
+        };
+        candleSeries.setMarkers([highlightMarker]);
+        window.lastFocusedTrade = { time: exactTime, side };
+
+        // Scroll chart to center on the target candle.
+        // lightweight-charts v4 has NO scrollToTime(); use setVisibleRange instead.
+        // Show a window of ~48 candles (24 before & 24 after the trade).
+        try {
+          const visibleBars = 48;
+          const halfBars = Math.floor(visibleBars / 2);
+          // Determine approximate candle interval (seconds) from the first two seriesMarkers
+          let intervalSec = 3600; // default 1h
+          if (seriesMarkers.length >= 2) {
+            intervalSec = seriesMarkers[1].time - seriesMarkers[0].time;
+            if (intervalSec <= 0) intervalSec = 3600;
+          }
+          const fromTime = exactTime - halfBars * intervalSec;
+          const toTime = exactTime + halfBars * intervalSec;
+          chart.timeScale().setVisibleRange({ from: fromTime, to: toTime });
+        } catch (scrollErr) {
+          // Fallback: scroll to real-time end
+          try { chart.timeScale().scrollToRealTime(); } catch (e2) { /* ignore */ }
+        }
+
+      } catch (e) {
+        console.error('Focus Trade Error:', e);
       }
     }
 
@@ -1503,7 +1688,15 @@
       // Buy Orders
       if (plan.buy_orders) {
         plan.buy_orders.forEach((o, i) => {
-          createLine(o.price, 'rgba(0, 230, 118, 0.6)', `B${i + 1}`, 2); // Dashed Green
+          const qtyStr = o.qty > 0 ? ` [${o.qty.toFixed(4)}]` : '';
+          createLine(o.price, 'rgba(0, 230, 118, 0.6)', `B${i + 1}${qtyStr}`, 2); // Dashed Green
+        });
+      }
+      // Sell Orders
+      if (plan.sell_orders) {
+        plan.sell_orders.forEach((o, i) => {
+          const qtyStr = o.qty > 0 ? ` [${o.qty.toFixed(4)}]` : '';
+          createLine(o.price, 'rgba(255, 77, 109, 0.6)', `S${i + 1}${qtyStr}`, 2); // Dashed Red
         });
       }
 

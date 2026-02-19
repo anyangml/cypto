@@ -62,8 +62,14 @@ class RegimeFilterConfig(BaseModel):
     hurst_fuse_threshold: float = Field(default=0.6, gt=0, lt=1, description="Hurst 超过此值需联合熔断")
     hurst_extreme_low: float = Field(default=0.35, gt=0, lt=1, description="Hurst 低于此值触发利润转现货")
 
+    # --- MA200 趋势方向（第 5 票）---
+    ma200_period: int = Field(default=200, ge=20, description="长期均线周期，用于趋势方向判断")
+    ma200_slope_lookback: int = Field(default=10, ge=1, description="计算 MA200 斜率时回看的 K 线根数")
+    ma200_slope_threshold: float = Field(default=0.0, description="MA200 斜率低于此值（下降）则投趋势票")
+
     # --- 投票机制 ---
-    trend_vote_threshold: int = Field(default=2, ge=1, le=4, description="判断为趋势所需的最少投票数")
+    # 共 5 个指标参与投票（ADX / ATR比值 / BB带宽 / Hurst / MA200斜率）
+    trend_vote_threshold: int = Field(default=2, ge=1, le=5, description="判断为趋势所需的最少投票数")
 
     @model_validator(mode="after")
     def check_cross_field_constraints(self) -> RegimeFilterConfig:
@@ -114,6 +120,12 @@ class RegimeFilterConfig(BaseModel):
                 f"否则数据窗口不足以支撑 ADX 的充分收敛"
             )
 
+        if self.ma200_slope_lookback >= self.ma200_period:
+            errors.append(
+                f"ma200_slope_lookback ({self.ma200_slope_lookback}) 必须 < "
+                f"ma200_period ({self.ma200_period})"
+            )
+
         if errors:
             raise ValueError("参数逻辑约束冲突:\n" + "\n".join(f"  - {e}" for e in errors))
 
@@ -128,7 +140,7 @@ class RegimeResult:
     position_ratio: float   # 分级仓位比例 (0.0 to 1.0)
     accumulate_spot: bool   # 是否开启利润转现货 BTC
     fuse_triggered: bool    # 是否由于 Hurst/ADX 触发了熔断
-    
+
     adx_value: float
     adx_vote: bool          # True = 趋势
     atr_ratio: float
@@ -137,8 +149,10 @@ class RegimeResult:
     bb_vote: bool
     hurst_value: float
     hurst_vote: bool
+    ma200_slope: float      # MA200 斜率（正=上升 负=下降）
+    ma200_vote: bool        # True = MA200 下降趋势（投趋势票）
     trend_votes: int        # 投票为趋势的指标数量
-    total_votes: int        # 参与投票的指标总数
+    total_votes: int        # 参与投票的指标总数（现为 5）
 
     def __str__(self) -> str:
         return (
@@ -149,6 +163,7 @@ class RegimeResult:
             f"ATR_ratio={self.atr_ratio:.3f}({'T' if self.atr_vote else 'R'}) | "
             f"BB_width={self.bb_width:.4f}({'T' if self.bb_vote else 'R'}) | "
             f"Hurst={self.hurst_value:.3f}({'T' if self.hurst_vote else 'R'}) | "
+            f"MA200_slope={self.ma200_slope:.4f}({'T' if self.ma200_vote else 'R'}) | "
             f"Votes={self.trend_votes}/{self.total_votes}"
         )
 
@@ -199,17 +214,20 @@ class RegimeFilter:
             )
 
         # 1. 计算指标数值
-        adx_val = self._calc_adx(df)
+        adx_val   = self._calc_adx(df)
         atr_ratio = self._calc_atr_ratio(df)
-        bb_width = self._calc_bb_width(df)
+        bb_width  = self._calc_bb_width(df)
         hurst_val = self._calc_hurst(df)
+        ma200_slope = self._calc_ma200_slope(df)
 
-        # 2. 投票判断 (传统的四指标投票)
-        adx_vote = adx_val > self.config.adx_trend_threshold
-        atr_vote = atr_ratio > self.config.atr_ratio_threshold
-        bb_vote = bb_width > self.config.bb_width_threshold
+        # 2. 投票判断（五指标投票：ADX / ATR比值 / BB带宽 / Hurst / MA200斜率）
+        adx_vote   = adx_val   > self.config.adx_trend_threshold
+        atr_vote   = atr_ratio > self.config.atr_ratio_threshold
+        bb_vote    = bb_width  > self.config.bb_width_threshold
         hurst_vote = hurst_val > self.config.hurst_threshold
-        trend_votes = sum([adx_vote, atr_vote, bb_vote, hurst_vote])
+        # MA200 斜率为负（均线下行）且价格低于 MA200 → 投趋势票
+        ma200_vote = ma200_slope < self.config.ma200_slope_threshold
+        trend_votes = sum([adx_vote, atr_vote, bb_vote, hurst_vote, ma200_vote])
 
         # 3. v2.0 逻辑：核心开关与熔断
         fuse_triggered = (hurst_val > self.config.hurst_fuse_threshold and adx_val > self.config.adx_fuse_threshold)
@@ -221,15 +239,8 @@ class RegimeFilter:
             else MarketRegime.RANGE
         )
 
-        # 震荡增强：必须满足 Hurst < 0.5 且 ADX < 25
-        # 震荡增强：Hurst < 0.5 且 ADX < 25
-        # v2.1 修正：不再强制修改 regime 为 TREND，而是仅作为一种状态标记或用于日志
-        # PRD 设计原意是 "Grid ON" 条件，而非 "Regime is RANGE" 的唯一条件
-        # 如果 adx_val > 25 或 hurst > 0.5，但投票结果仍是 RANGE，则维持 RANGE 状态
-        # 具体的开仓约束交由 position_ratio 控制（例如 hurst>0.55 时 pos=0）
-        pass
-
         # 如果触发熔断，状态强制为 FUSE
+        # 注：震荡/趋势的边界约束由 position_ratio 分级表控制，不在此强制改写 regime
         if fuse_triggered:
             regime = MarketRegime.FUSE
 
@@ -284,8 +295,10 @@ class RegimeFilter:
             bb_vote=bb_vote,
             hurst_value=hurst_val,
             hurst_vote=hurst_vote,
+            ma200_slope=ma200_slope,
+            ma200_vote=ma200_vote,
             trend_votes=trend_votes,
-            total_votes=4,
+            total_votes=5,
         )
         if verbose:
             logger.info("Regime 判断结果: %s", result)
@@ -296,12 +309,32 @@ class RegimeFilter:
         对整个 DataFrame 进行逐行滚动判断，返回每个时间点的市场状态序列。
         用于回测时标注历史上哪些时段适合开启网格。
 
-        Args:
-            df: 完整的 OHLCV DataFrame。
+        Returns:
+            pd.Series，值为 "RANGE" / "TREND" / "FUSE"，索引与 df 对齐。
+            前 min_required 行因数据不足，填充为 NaN。
+        """
+        results = self.scan_dataframe_full(df)
+        regimes = pd.Series(
+            [r.regime.value if r is not None else None for r in results],
+            index=df.index,
+            dtype=object,
+        )
+        logger.info(
+            "历史 Regime 扫描完成 | 有效 %d 个 | RANGE: %d | TREND: %d | FUSE: %d",
+            regimes.notna().sum(),
+            (regimes == "RANGE").sum(),
+            (regimes == "TREND").sum(),
+            (regimes == "FUSE").sum(),
+        )
+        return regimes
+
+    def scan_dataframe_full(self, df: pd.DataFrame) -> "list[Optional[RegimeResult]]":
+        """
+        对整个 DataFrame 进行逐行滚动判断，返回每个时间点完整的 RegimeResult
+        （含 position_ratio、各指标值等），供回测引擎直接使用。
 
         Returns:
-            pd.Series，值为 "RANGE" 或 "TREND"，索引与 df 对齐。
-            前 min_required 行因数据不足，填充为 NaN。
+            长度与 df 相同的列表；数据不足的位置为 None。
         """
         min_required = max(
             self.config.adx_period * 2,
@@ -309,31 +342,24 @@ class RegimeFilter:
             self.config.bb_period,
             self.config.hurst_period,
         )
+        # 限制滑窗大小，避免 O(N²)；缓冲 200 根 K 线供指标充分收敛
+        window_size = min_required + 200
 
-        
-        # 优化：限制窗口大小，避免 O(N^2)
-        # 取最大需要的周期 + 缓冲
-        window_size = min_required + 200 
-
-        regimes = pd.Series(index=df.index, dtype=object)
+        results: list = [None] * len(df)
         for i in range(min_required, len(df) + 1):
-            # i 是结束索引（不包含），起始索引向前推
             start_idx = max(0, i - window_size)
-            window = df.iloc[start_idx:i]
-            
             try:
-                result = self.get_market_regime(window, verbose=False)
-                regimes.iloc[i - 1] = result.regime.value
+                result = self.get_market_regime(df.iloc[start_idx:i], verbose=False)
+                results[i - 1] = result
             except ValueError:
                 pass
 
         logger.info(
-            "历史 Regime 扫描完成 | 总计 %d 个时间点 | RANGE: %d | TREND: %d",
-            regimes.notna().sum(),
-            (regimes == "RANGE").sum(),
-            (regimes == "TREND").sum(),
+            "Regime 全量扫描完成 | 有效时间点 %d / %d",
+            sum(1 for r in results if r is not None),
+            len(df),
         )
-        return regimes
+        return results
 
     # ------------------------------------------------------------------
     # 私有指标计算方法
@@ -501,3 +527,29 @@ class RegimeFilter:
         # 线性回归斜率即为 Hurst 指数
         hurst = float(np.polyfit(lags_arr, rs_arr, 1)[0])
         return float(np.clip(hurst, 0.0, 1.0))
+
+    def _calc_ma200_slope(self, df: pd.DataFrame) -> float:
+        """
+        计算 MA200（长期均线）的归一化斜率。
+
+        斜率 = (MA200_latest - MA200_lookback根前) / MA200_lookback根前
+        正值 = 均线上升（多头趋势背景）
+        负值 = 均线下降（空头趋势背景）→ 触发第 5 票"趋势"投票
+
+        数据不足时返回 0.0（中性，不投票）。
+        """
+        period   = self.config.ma200_period
+        lookback = self.config.ma200_slope_lookback
+
+        if len(df) < period + lookback:
+            return 0.0
+
+        ma = df["close"].rolling(period).mean()
+        ma_now  = float(ma.iloc[-1])
+        ma_prev = float(ma.iloc[-(lookback + 1)])
+
+        if ma_prev == 0:
+            return 0.0
+
+        # 归一化斜率：单位为"每 lookback 根 K 线的相对变化率"
+        return (ma_now - ma_prev) / ma_prev
