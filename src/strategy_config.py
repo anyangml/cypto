@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Optional, List
 
 import yaml
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, ValidationError, Field
 
 from src.regime_filter import RegimeFilterConfig
 from src.grid_engine import GridEngineConfig
@@ -50,6 +50,16 @@ class RiskControlConfig(BaseModel):
     funding_rate_max: float = 0.0004
     funding_rate_min: float = -0.0002
     cvd_divergence_enabled: bool = True
+    
+    # --- 卖单持久化 / 收益记忆 (Persistence) ---
+    keep_persistent_orders: bool = Field(default=False, description="重置网格时是否保留已买入头寸对应的卖单")
+
+
+class BacktestConfig(BaseModel):
+    initial_capital: float = 10000.0
+    fee_rate: float = 0.001
+    min_order_value: float = 5.0
+    initial_pos_ratio: float = 1.0  # 1.0 = 100% USDT (No initial BTC)
 
 
 class StrategyConfig(BaseModel):
@@ -61,6 +71,7 @@ class StrategyConfig(BaseModel):
     position_sizing: PositionSizingConfig = PositionSizingConfig()
     grid_engine: GridEngineConfig = GridEngineConfig()
     risk_control: RiskControlConfig = RiskControlConfig()
+    backtest: BacktestConfig = BacktestConfig()
 
 
 def load_strategy_config(path: Optional[str | Path] = None) -> StrategyConfig:

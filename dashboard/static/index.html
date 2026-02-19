@@ -1035,7 +1035,10 @@
     let seriesMarkers = [];
     let gridLines = [];
     let lastGridPlan = null;
+    let lastGridPlanHistory = null;
     let lastBacktestResult = null;
+    let allCandles = []; // To map logical index to time
+    let lastRenderedTime = 0;
 
     const DEFAULTS = {
       adx_period: 14, adx_trend_threshold: 25.0, adx_fuse_threshold: 30.0,
@@ -1094,6 +1097,53 @@
           height: container.clientHeight,
         });
       }).observe(container);
+
+      // Subscribe to crosshair move for historical grid visualization
+      chart.subscribeCrosshairMove(param => {
+        if (!document.getElementById('chk-show-grid').checked) return;
+
+        // Try to find nearest plan
+        const match = param.time ? getNearestGridPlan(param.time) : null;
+
+        if (!match) {
+          // If no crosshair match (e.g. mouse out), do NOT fallback to latest grid immediately
+          // Let the visible range handler take over or rely on previous state
+          // to avoid flickering.
+          return;
+        }
+
+        // Show historical grid
+        const dateStr = formatGridDate(match.time);
+        renderGrid(match.plan, `HIST @ ${dateStr}`);
+        lastRenderedTime = match.time;
+      });
+
+      // Also update grid when viewport changes (drag/zoom)
+      // This ensures grid stays relevant even without mouse movement
+      chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+        if (!document.getElementById('chk-show-grid').checked) return;
+        if (!range || allCandles.length === 0) return;
+
+        // Calculate center of viewport
+        const centerIdx = Math.round((range.from + range.to) / 2);
+
+        // Map to candle
+        // Note: range indices can be float and outside data bounds
+        const safeIdx = Math.max(0, Math.min(centerIdx, allCandles.length - 1));
+        const candle = allCandles[safeIdx];
+
+        if (candle && candle.time) {
+          // Avoid redundant renders
+          if (Math.abs(candle.time - lastRenderedTime) < 60) return; // 1 min buffer
+
+          const match = getNearestGridPlan(candle.time);
+          if (match) {
+            const dateStr = formatGridDate(match.time);
+            renderGrid(match.plan, `VIEW @ ${dateStr}`);
+            lastRenderedTime = match.time;
+          }
+        }
+      });
     }
 
     // ── Mode toggle ───────────────────────────────────────────────────
@@ -1414,7 +1464,29 @@
         const pct = ((seg.end_time - seg.start_time) / total * 100).toFixed(2);
         const bar = document.createElement('div');
         bar.style.cssText = `flex:0 0 ${pct}%;height:100%;background:${seg.regime === 'RANGE' ? 'rgba(0,230,118,0.5)' : 'rgba(255,77,109,0.5)'
-          };border-radius:2px;`;
+          };border-radius:2px;cursor:pointer;transition:transform 0.1s;`;
+
+        bar.onmouseover = () => { bar.style.transform = 'scaleY(1.3)'; bar.style.zIndex = '10'; };
+        bar.onmouseout = () => { bar.style.transform = 'scaleY(1.0)'; bar.style.zIndex = '1'; };
+
+        bar.onclick = () => {
+          const duration = seg.end_time - seg.start_time;
+          const padding = Math.max(duration * 0.1, 3600 * 6); // 10% padding or 6h
+          chart.timeScale().setVisibleRange({
+            from: seg.start_time - padding,
+            to: seg.end_time + padding
+          });
+
+          // Also immediately show grid for this segment's start
+          const match = getNearestGridPlan(seg.start_time);
+          if (match) {
+            renderGrid(match.plan, `SEG @ ${formatGridDate(match.time)}`);
+            showToast(`Zooming to ${seg.regime} (Grid: ${formatGridDate(match.time)})`);
+          } else {
+            showToast(`Zooming to ${seg.regime} segment`);
+          }
+        };
+
         bar.title = `${seg.regime}: ${new Date(seg.start_time * 1000).toLocaleDateString()} → ${new Date(seg.end_time * 1000).toLocaleDateString()}`;
         container.appendChild(bar);
       });
@@ -1473,10 +1545,11 @@
           `${data.candles.length} candles loaded`;
 
         // Feed candles
-        candleSeries.setData(data.candles.map(c => ({
+        allCandles = data.candles.map(c => ({
           time: c.time,
           open: c.open, high: c.high, low: c.low, close: c.close,
-        })));
+        }));
+        candleSeries.setData(allCandles);
 
         // Regime bands
         renderRegimeBands(data.segments);
@@ -1484,6 +1557,8 @@
 
         // Store grid plan
         lastGridPlan = data.grid_plan;
+        lastGridPlanHistory = data.backtest ? data.backtest.grid_history : null;
+
         if (document.getElementById('chk-show-grid').checked && lastGridPlan) {
           renderGrid(lastGridPlan);
         } else {
@@ -1664,46 +1739,66 @@
       gridLines = [];
     }
 
-    function renderGrid(plan) {
+    function getNearestGridPlan(ts) {
+      if (!lastGridPlanHistory) return null;
+      if (lastGridPlanHistory[ts]) return { plan: lastGridPlanHistory[ts], time: ts, exact: true };
+
+      const timestamps = Object.keys(lastGridPlanHistory).map(Number).sort((a, b) => b - a);
+      const nearest = timestamps.find(t => t <= ts);
+      return nearest ? { plan: lastGridPlanHistory[nearest], time: nearest, exact: false } : null;
+    }
+
+    function formatGridDate(ts) {
+      const d = new Date(ts * 1000);
+      const mm = (d.getMonth() + 1).toString().padStart(2, '0');
+      const dd = d.getDate().toString().padStart(2, '0');
+      const hh = d.getHours().toString().padStart(2, '0');
+      const min = d.getMinutes().toString().padStart(2, '0');
+      return `${mm}-${dd} ${hh}:${min}`;
+    }
+
+    function renderGrid(plan, titlePrefix = '') {
       clearGrid();
       if (!plan) return;
+
+      const prefix = titlePrefix ? `[${titlePrefix}] ` : '';
+      const isHist = !!titlePrefix;
 
       const createLine = (price, color, title, style = 1) => { // style 1=Solid, 2=Dashed
         const l = candleSeries.createPriceLine({
           price: price,
-          color: color,
-          lineWidth: 1,
+          color: isHist ? adjustAlpha(color, 0.4) : color,
+          lineWidth: isHist ? 1 : 1,
           lineStyle: style,
           axisLabelVisible: true,
-          title: title,
+          title: prefix + title,
         });
         gridLines.push(l);
       };
 
+      // Helper to dim colors for history
+      function adjustAlpha(rgba, alpha) {
+        if (!rgba.startsWith('rgba')) return rgba;
+        return rgba.replace(/[\d\.]+\)$/g, `${alpha})`);
+      }
+
       // Middle & Boundaries
-      createLine(plan.mid_price, '#f1c40f', 'Mid', 2);
-      createLine(plan.upper_boundary, '#9b59b6', 'Upper', 1);
-      createLine(plan.lower_boundary, '#9b59b6', 'Lower', 1);
+      createLine(plan.mid_price, isHist ? '#7f8c8d' : '#f1c40f', 'Mid', 2);
+      createLine(plan.upper_boundary, isHist ? '#34495e' : '#9b59b6', 'Upper', 1);
+      createLine(plan.lower_boundary, isHist ? '#34495e' : '#9b59b6', 'Lower', 1);
 
       // Buy Orders
       if (plan.buy_orders) {
         plan.buy_orders.forEach((o, i) => {
           const qtyStr = o.qty > 0 ? ` [${o.qty.toFixed(4)}]` : '';
-          createLine(o.price, 'rgba(0, 230, 118, 0.6)', `B${i + 1}${qtyStr}`, 2); // Dashed Green
+          createLine(o.price, 'rgba(0, 230, 118, 0.6)', `B${i + 1}${qtyStr}`, 2);
         });
       }
       // Sell Orders
       if (plan.sell_orders) {
         plan.sell_orders.forEach((o, i) => {
           const qtyStr = o.qty > 0 ? ` [${o.qty.toFixed(4)}]` : '';
-          createLine(o.price, 'rgba(255, 77, 109, 0.6)', `S${i + 1}${qtyStr}`, 2); // Dashed Red
-        });
-      }
-
-      // Sell Orders
-      if (plan.sell_orders) {
-        plan.sell_orders.forEach((o, i) => {
-          createLine(o.price, 'rgba(255, 77, 109, 0.6)', `S${i + 1}`, 2); // Dashed Red
+          createLine(o.price, 'rgba(255, 77, 109, 0.6)', `S${i + 1}${qtyStr}`, 2);
         });
       }
     }

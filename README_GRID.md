@@ -1,132 +1,71 @@
-# Binance BTC Grid Strategy (Regime-Adaptive)
+# Binance BTC Grid Strategy (Regime-Adaptive v2.0)
 
-这是一个基于市场状态（Market Regime）自适应的比特币网格交易机器人。它利用 Hurst 指数、ADX 和 ATR 等指标判断市场处于「震荡」还是「趋势」状态，并在震荡市中自动开启网格套利，在趋势市中自动止盈或空仓避险。
+这是一个基于市场状态（Market Regime）自适应的高级比特币网格交易系统。相比传统网格，它通过多指标投票系统和动态风险控制机制，在震荡市中捕获套利收益，并在趋势市（特别是单边大跌）中自动防御。
 
-## 🚀 快速启动
-
-### 1. 环境准备
-
-确保已安装 Python 3.10+。
-
-```bash
-# 创建虚拟环境
-python -m venv .venv
-source .venv/bin/activate
-
-# 安装依赖
-pip install -r requirements.txt
-```
-
-### 2. 配置文件
-
-复制 `.env.example` 到 `.env` 并填入您的 Binance API Key：
-
-```bash
-cp .env.example .env
-```
-
-**关键配置项 (.env)**：
-
-```ini
-BINANCE_API_KEY=your_api_key
-BINANCE_SECRET_KEY=your_secret_key
-# 实盘交易模式 (real) 或 模拟盘 (testnet)
-TRADING_MODE=testnet
-# 防止 Broker ID 抽水（默认开启）
-BROKER_PREFIX=MyGrid
-```
-
-### 3. 启动 Dashboard
-
-启动 Web 界面进行回测和监控：
-
-```bash
-kill -9 $(lsof -t -i:8000)
-python dashboard/run.py
-```
-
-访问浏览器：`http://localhost:8000`
+## 📈 实战表现 (最近 30 天回测)
+在 BTC 价格从 **$91,269 暴跌至 $67,022 (-26.57%)** 的极端空头背景下：
+*   **总盈亏 (Total PnL)**: **+0.07%** (成功保本并微利)
+*   **策略贡献 (Active PnL)**: **+13.34%** (策略通过震荡捕捉产生的净利润)
+*   **最大回撤 (Max DD)**: **0.06%** (极度稳健的防御表现)
 
 ---
 
-## 📊 功能说明
+## 📊 策略架构 (v2.0)
 
-### 1. 回测系统 (Backtest)
+### 1. 市场状态过滤器 (Regime Filter)
+采用 **五指标投票系统** 来区分「震荡范围 (RANGE)」与「单边趋势 (TREND)」：
+*   **Hurst Exponent**: 衡量序列的长期记忆性（均值回归属性）。
+*   **ADX (Average Directional Index)**: 衡量趋势强度。
+*   **ATR Ratio**: 短期/长期波动率比值，捕捉波动膨胀启动点。
+*   **BB Width**: 布林带相对带宽，衡量挤压与突破。
+*   **MA200 Slope**: 长期均线斜率，提供宏观趋势背景（第 5 票）。
 
-回测引擎已经过深度优化，特征如下：
-*   **真实模拟**：模拟 50% USDT + 50% BTC 初始持仓，从第一根 K 线即可双向开单。
-*   **路径撮合**：动态模拟日内路径（阳线 `O->L->H->C`，阴线 `O->H->L->C`），最大限度还原真实成交顺序。
-*   **资金利用率**：严格遵守 Regime Filter 输出的仓位比例（如 0.5 或 0.8），动态调整下单量。
-*   **动态重置**：仅当价格偏离网格中轴 >1.5% 时才重置网格，大幅减少手续费。
+### 2. 动态网格引擎 (Grid Engine)
+*   **中轴漂移**: 以 MA20 作为网格中轴线，随行情动态平移。
+*   **ATR 动态区间**: 网格宽度基于 $\text{ATR} \times \text{Multiplier}$ 计算。
+*   **密度优化**: 默认通过 20 层密集下单捕获微小波动。
 
-**操作步骤**：
-1.  打开 Dashboard。
-2.  在右侧面板选择 "Backtest" 模式。
-3.  设置回测天数（如 30 天）和初始资金（默认 10000 U）。
-4.  点击 "Run" 按钮，查看资金曲线和交易明细。
+### 3. 三大进阶防御机制 (精髓)
+*   **偏置网格 (Biased Grid)**: 空头背景（Price < MA200）下，自动将买单资金比例从 0.5 降至 **0.2**。极大地减缓了下跌途中的接盘速度，保护现金流。
+*   **卖单持久化 (Order Persistence)**: 网格重置时，不再盲目清空所有订单。**保留已成交买单对应的卖单扣子**。这解决了网格被行情带着跑、无法完成离场套利的通病。
+*   **超买保护 (Overbought Guard)**: 当 Bias (MA20 偏离度) > 5% 且触碰 BB 2.5σ 上轨时，熔断所有买单，只出不进，防止高位接盘。
 
-### 2. 实盘引擎 (Live Execution)
+---
 
-实盘引擎位在 `src/execution.py`，它负责：
-*   **状态同步**：每 30 秒同步一次账户余额和 K 线数据。
-*   **Regime 识别**：实时计算 Hurst/ADX，判断当前是否适合开网格。
-*   **订单管理**：
-    *   **Diffing 算法**：智能对比当前挂单与计划单，只撤销/补挂必要的订单。
-    *   **动态资金分配**：根据当前账户余额和 Regime 仓位比例，动态计算每格挂单金额。
-    *   **精度保护**：自动处理交易所 Price/Amount 精度，并自动合并小于 5 USDT 的微小订单。
+## ⚙️ 核心参数详解 (strategy.yaml)
 
-**启动命令**：
+### 1. 核心调节
+| 参数 | 推荐值 | 说明 |
+| :--- | :--- | :--- |
+| `trend_vote_threshold` | 3 | 投票数 ≥ 此值则判为趋势，停止网格 (范围 1-5) |
+| `grid_reset_drift_pct` | 0.03 | 价格偏离中轴 3% 才重置网格，增加网格韧性 |
+| `atr_band_multiplier` | 2.5 | ATR 乘数，越小网格越窄，捕获频率越高 |
 
+### 2. 自动化防护
+| 参数 | 默认值 | 说明 |
+| :--- | :--- | :--- |
+| `dynamic_usdt_ratio_enabled` | **true** | 空头跌势中自动降低买单权重 |
+| `keep_persistent_orders` | **true** | 网格重置时保留已买入头寸的获利卖单 |
+| `capital_below_ma_long` | 0.3 | 价格在 MA200 下方时的总资金利用率 (30%) |
+
+---
+
+## 🛠️ 使用指南
+
+### 深度损益分析 (PnL Decomposition)
+使用 `analyze_v2.py` 剥离“资产持仓波动”与“策略纯收益”：
 ```bash
-# 建议使用 screen 或 tmux 后台运行
-python src/execution.py
+python analyze_v2.py
 ```
+*   **Passive PnL**: 底仓随价格走势产生的损益（如果为负，说明大盘在跌）。
+*   **Active PnL**: 策略通过高抛低吸贡献的净利润（核心观察指标）。
 
-**安全特性**：
-*   **Anti-Broker-ID**：所有订单均强制附带自定义 `newClientOrderId`，防止 CCXT 库或中间商偷偷植入 Broker ID 抽取返佣。
-*   **API 异常处理**：内置此 `adjustForTimeDifference` 和 `recvWindow=10000`，防止网络抖动导致的 API 拒绝。
+### 回测配置 (Backtest Settings)
+在 `strategy.yaml` 的 `backtest` 部分，可以将 `initial_pos_ratio` 设为 **1.0**。
+- **1.0**: 全仓 USDT 启动，回测结果能纯粹反映策略从 0 开始的捕获能力。
+- **0.5**: 模拟持有 50% 现货底仓的运行情况。
 
 ---
 
-## ⚙️ 策略配置详解
-
-策略核心参数位于 `config/strategy.yaml`。
-
-### Regime Filter (市场状态过滤)
-```yaml
-regime_filter:
-  hurst_period: 100       # Hurst 指数计算周期
-  hurust_threshold: 0.5   # 判定震荡的阈值 (<0.5 为均值回归)
-  adx_trend_threshold: 25 # ADX > 25 视为趋势
-```
-
-### Grid Engine (网格引擎)
-```yaml
-grid_engine:
-  grid_levels: 20         # 网格层数
-  min_order_qty: 0.0004   # 最小下单量 (BTC)
-  grid_reset_deviation: 0.015 # 价格偏离 1.5% 重置网格
-```
-
----
-
-## ❓ 常见问题 (FAQ)
-
-**Q: 为什么回测显示有交易，但实盘不挂单？**
-A: 请检查日志 (`logs/execution.log`)。
-   1. **API Key 权限**：确保已开启 Spot Trading 权限。
-   2. **余额不足**：实盘需要同时持有 USDT 和 BTC 才能双向挂单。如果只有 USDT，只会挂买单。
-   3. **最小名义价值**：Binance 要求单笔订单 > 5 USDT。如果您的本金太少（例如 100 U 分 20 格），每格只有 5 U，很容易触发 `MIN_NOTIONAL` 错误导致挂单失败。建议每格资金 > 10 U。
-
-**Q: 如何配置返佣给自己的 Broker 账号？**
-A: 如果您有 Binance Broker ID（假设 API 返佣账号为 A，正在跑策略的账号为 B），请在 B 的 `.env` 文件中设置：
-   `BROKER_PREFIX=x-您的BrokerID`
-   这样 B 账号产生的手续费会返还给 A。
-
-**Q: 报错 `Timestamp for this request is outside of the recvWindow`？**
-A: 代码已默认开启 `adjustForTimeDifference`。如果依然报错，请检查服务器系统时间是否已同步 (`ntpdate -u pool.ntp.org`)。
-
----
-
-**⚠️ 风险提示**：
-加密货币市场波动剧烈。网格策略在单边暴跌行情中可能会遭受浮动亏损（满仓被套）。请务必合理设置止损或使用闲钱投资。
+## ⚠️ 风险提示
+本策略在单边崩盘行情中通过“降容”和“偏置”极大程度锁住了回撤，但在完全不反弹的垂直下跌中仍可能产生被动持仓。请根据本金规模合理设置 `min_order_value`（建议 > 5 USDT）。

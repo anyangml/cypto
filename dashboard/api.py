@@ -210,11 +210,6 @@ class IndicatorSnapshot(BaseModel):
     fuse_triggered: bool
 
 
-class BacktestOutput(BaseModel):
-    equity_curve: List[Dict]
-    trades: List[Dict]
-    metrics: Dict
-
 class GridPlan(BaseModel):
     mid_price: float
     upper_boundary: float
@@ -225,6 +220,13 @@ class GridPlan(BaseModel):
     sell_orders: List[Dict]
     overbought_triggered: bool
     downtrend_protection: bool
+
+
+class BacktestOutput(BaseModel):
+    equity_curve: List[Dict]
+    trades: List[Dict]
+    metrics: Dict
+    grid_history: Optional[Dict[int, Optional[GridPlan]]] = None
 
 class RegimeResponse(BaseModel):
     candles: List[CandleData]
@@ -446,6 +448,9 @@ def compute_regime(req: RegimeRequest):
             backtest_result = BacktestOutput(**raw_res)
         except Exception as e:
             logger.error("回测执行失败: %s", e)
+            import traceback
+            traceback.print_exc()
+            raise HTTPException(status_code=500, detail=f"Backtest failed: {str(e)}")
 
     return RegimeResponse(
         candles=candles,

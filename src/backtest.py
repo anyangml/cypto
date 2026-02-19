@@ -69,7 +69,9 @@ class BacktestEngine:
         self.orders:       List[Dict] = []
         self.trades:       List[Dict] = []
         self.equity_curve: List[Dict] = []
+        self.grid_history: Dict[int, Dict] = {} # timestamp -> plan
         self.last_grid_mid: Optional[float] = None
+        self._active_grid_plan: Optional[Dict] = None # 最近一次生效的网格计划
         self._order_seq:   int = 0   # 全局自增 ID，确保每笔挂单 ID 唯一
 
     # ------------------------------------------------------------------
@@ -132,7 +134,9 @@ class BacktestEngine:
         self.orders       = []
         self.trades       = []
         self.equity_curve = []
+        self.grid_history = {}
         self.last_grid_mid = None
+        self._active_grid_plan = None
         self._order_seq   = 0
         logger.info(
             "Backtest 初始化 | %.2f USDT + %.6f BTC @ %.2f",
@@ -216,29 +220,43 @@ class BacktestEngine:
         regime_status = regime_res.regime
 
         if regime_status in (MarketRegime.FUSE, MarketRegime.TREND):
-            if self.orders:
+            # 任何时刻只要进入非 RANGE 状态，都强制清空网格状态
+            if self.orders or self._active_grid_plan:
                 self.orders.clear()
                 self.last_grid_mid = None
+                self._active_grid_plan = None
 
         elif regime_status == MarketRegime.RANGE:
-            should_reset = not self.orders  # 无挂单时必须重置
+            # 安全检查：如果不小心丢了中轴记录，但又留了旧单子，必须强行复位
+            if self.orders and self.last_grid_mid is None:
+                self.orders.clear()
+                should_reset = True
+            else:
+                should_reset = not self.orders  # 无挂单时必须重置
 
             if self.last_grid_mid:
                 drift = abs(current_price - self.last_grid_mid) / self.last_grid_mid
-                grid_reset_threshold = getattr(
-                    self.strategy_cfg, "grid_reset_drift_pct", 0.015
-                )
+                # 修复配置项读取路径：grid_engine.grid_reset_drift_pct
+                grid_reset_threshold = self.strategy_cfg.grid_engine.grid_reset_drift_pct
                 if drift > grid_reset_threshold:
                     should_reset = True
 
             # 风控：仓位比例为 0 时强制清空
+            # 风控：仓位比例为 0 时强制清空
             if regime_res.position_ratio <= 0:
                 self.orders.clear()
                 self.last_grid_mid = None
-                return
+                self._active_grid_plan = None
+            
+            elif should_reset:
+                # 实现“卖单持久化”逻辑：
+                # 如果开启，重置时仅删除买单，保留卖单（代表已买入头寸的离场单）
+                if self.strategy_cfg.risk_control.keep_persistent_orders:
+                    self.orders = [o for o in self.orders if o["side"] == "sell"]
+                    logger.debug("网格重置：保留现有 %d 笔卖单", len(self.orders))
+                else:
+                    self.orders.clear()
 
-            if should_reset:
-                self.orders.clear()
                 total_equity = self.balance_usdt + self.balance_btc * current_price
                 calc_window  = df.iloc[max(0, bar_idx - 300): bar_idx + 1]
                 grid_plan    = self.ge.calculate_grid(
@@ -247,7 +265,13 @@ class BacktestEngine:
                     position_ratio=regime_res.position_ratio,
                 )
                 self.last_grid_mid = grid_plan["mid_price"]
+                self._active_grid_plan = grid_plan
                 self._place_orders(grid_plan, current_price)
+
+        # 记录每根 K 线时刻的活跃网格计划（用于前端回溯显示）
+        # 即使是 None 也要记录，显式告诉前端“此处无网格”，防止回溯到更早的过期网格
+        ts = int(bar.timestamp)
+        self.grid_history[ts] = self._active_grid_plan
 
     # ------------------------------------------------------------------
     # 交易执行
@@ -294,54 +318,51 @@ class BacktestEngine:
         return True
 
     def _place_orders(self, plan: Dict, current_price: float) -> None:
-        """根据网格计划生成挂单，资金按网格层均分。"""
-        utilization       = plan.get("capital_utilization", 1.0)
-        target_usdt       = self.balance_usdt * utilization
-        target_btc        = self.balance_btc  * utilization
-
-        # 获取网格锁定状态（来自 GridEngine 的保护逻辑）
+        """根据网格计划生成挂单，直接使用 GridEngine 计算出的建议 Qty。"""
+        # 获取网格锁定状态
         buy_enabled  = plan.get("buy_grid_enabled", True)
         sell_enabled = plan.get("sell_grid_enabled", True)
 
-        # 买单：价格须低于当前价 且 买单开启
-        valid_buys  = []
+        # 1. 准备买单
         if buy_enabled:
-            valid_buys = [o for o in plan["buy_orders"] if o["price"] < current_price]
-            
-        # 卖单：价格须高于当前价 且 卖单开启
-        valid_sells = []
+            for bo in plan.get("buy_orders", []):
+                price = bo["price"]
+                qty   = bo["qty"]
+                cost  = price * qty
+                
+                # 过滤高于当前价的买单 (防止立即成交) 和 数量为 0 的无效单
+                if price < current_price and qty > 0:
+                    # 检查 USDT 余额是否足够
+                    if self.balance_usdt >= cost:
+                        self._order_seq += 1
+                        self.orders.append({
+                            "id":    self._order_seq,
+                            "side":  "buy",
+                            "price": price,
+                            "qty":   qty,
+                        })
+                    else:
+                        logger.debug("USDT 不足，跳过买单: 需 %.2f, 剩 %.2f", cost, self.balance_usdt)
+
+        # 2. 准备卖单
         if sell_enabled:
-            valid_sells = [o for o in plan["sell_orders"] if o["price"] > current_price]
-
-        # 1. 下买单 (USDT -> BTC)
-        if valid_buys and target_usdt > self._min_order_value:
-            amount_per = target_usdt / len(valid_buys)
-            for bo in valid_buys:
-                qty = amount_per / bo["price"]
-                # 必须满足最小下单量和最小名义价值
-                if amount_per >= self._min_order_value and qty >= self.ge.config.min_order_qty:
-                    self._order_seq += 1
-                    self.orders.append({
-                        "id":    self._order_seq,
-                        "side":  "buy",
-                        "price": bo["price"],
-                        "qty":   qty,
-                    })
-
-        # 2. 下卖单 (BTC -> USDT)
-        if valid_sells and target_btc > 0:
-            qty_per = target_btc / len(valid_sells)
-            for so in valid_sells:
-                notional = qty_per * so["price"]
-                # 必须满足最小下单量和最小名义价值
-                if notional >= self._min_order_value and qty_per >= self.ge.config.min_order_qty:
-                    self._order_seq += 1
-                    self.orders.append({
-                        "id":    self._order_seq,
-                        "side":  "sell",
-                        "price": so["price"],
-                        "qty":   qty_per,
-                    })
+            for so in plan.get("sell_orders", []):
+                price = so["price"]
+                qty   = so["qty"]
+                
+                # 过滤低于当前价的卖单 和 数量为 0 的无效单
+                if price > current_price and qty > 0:
+                    # 检查 BTC 余额是否足够
+                    if self.balance_btc >= qty:
+                        self._order_seq += 1
+                        self.orders.append({
+                            "id":    self._order_seq,
+                            "side":  "sell",
+                            "price": price,
+                            "qty":   qty,
+                        })
+                    else:
+                        logger.debug("BTC 不足，跳过卖单: 需 %.6f, 剩 %.6f", qty, self.balance_btc)
 
     # ------------------------------------------------------------------
     # 权益快照 & 报告生成
@@ -376,6 +397,7 @@ class BacktestEngine:
         return {
             "equity_curve": self.equity_curve,
             "trades":       self.trades,
+            "grid_history": self.grid_history,
             "metrics": {
                 "total_return_pct":  round(ret_pct * 100, 2),
                 "final_value":       round(final_val,      2),

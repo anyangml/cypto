@@ -51,6 +51,13 @@ class GridEngineConfig(BaseModel):
 
     # 资金分配：active_capital 中有多少比例分配给买方（USDT），剩余估算为 BTC 分配卖方
     usdt_ratio: float = Field(default=0.5, gt=0, le=1.0, description="active_capital 中买方 USDT 占比")
+    
+    # --- 偏置网格 / 持仓倾斜 (Biased Grid) ---
+    dynamic_usdt_ratio_enabled: bool = Field(default=False, description="是否在空头背景下自动降低买单权重")
+    bear_market_usdt_ratio:      float = Field(default=0.2, gt=0, le=1.0, description="空头背景下的 usdt_ratio")
+
+    # --- 重置逻辑 ---
+    grid_reset_drift_pct: float = Field(default=0.03, gt=0, description="价格偏离中轴多少比例时重置网格")
 
 
 class GridEngine:
@@ -130,8 +137,13 @@ class GridEngine:
         # 6. 资金分配
         #   买方：USDT 部分  (active_capital * usdt_ratio)
         #   卖方：BTC 等值部分（剩余按当前价格估算为 BTC）
-        usdt_for_buys = active_capital * self.config.usdt_ratio
-        btc_for_sells = (active_capital * (1 - self.config.usdt_ratio)) / latest_close
+        current_usdt_ratio = self.config.usdt_ratio
+        if self.config.dynamic_usdt_ratio_enabled and (not is_bull):
+            current_usdt_ratio = self.config.bear_market_usdt_ratio
+            logger.debug("空头背景：调低买单权重 | usdt_ratio: %.2f -> %.2f", self.config.usdt_ratio, current_usdt_ratio)
+
+        usdt_for_buys = active_capital * current_usdt_ratio
+        btc_for_sells = (active_capital * (1 - current_usdt_ratio)) / latest_close
 
         # 7. 生成挂单（含 qty 计算）
         buy_orders:  list = []
